@@ -1,0 +1,6 @@
+[submodule "submodules/MIDI-KERNAL"]
+	path = submodules/MIDI-KERNAL
+	url = https://github.com/Chysn/MIDI-KERNAL.git
+[submodule "submodules/sequential_lib"]
+	path = submodules/sequential_lib
+	url = https://github.com/Chysn/sequential_lib.git
