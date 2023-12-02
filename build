@@ -1,0 +1,7 @@
+#!/bin/bash
+
+xa -l toc -o ./vic/p5ed.bin ./src/p5ed.asm
+printf "\x00\x60" | cat - ./vic/p5ed.bin > ./vic/p5ed
+cp ./vic/p5ed ~/personal/vic
+
+
