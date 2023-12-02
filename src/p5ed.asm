@@ -37,12 +37,14 @@ PAGE        = $033d             ; Current page number
 FIELD_IX    = $033e             ; Current field index
 LISTEN      = $033f             ; Sysex listen flag
 TOGGLE      = $0340             ; General use toggle value
-CURRPRG     = $1300             ; Current program indexed buffer (128 bytes)
+REPEAT      = $0341             ; Repeat speed
+KEYBUFF     = $0342             ; Last key pressed
+OUTSYSEX    = $1100             ; Outgoing sysex
+CURRPRG     = $1200             ; Current program indexed buffer (128 bytes)
 SYSEX       = $1400             ; System exclusive storage (8 programs,$A0 ea.)
 
 ; Character Constants
 CR          = $0d               ; Carriage return PETSCII
-CLSC        = $93               ; Clear screen PETSCII   
 RT          = $1d               ; Cursor right 
 W_TRI       = $ce               ; Triangle waveform
 W_TRI2      = $cd               ; ,,
@@ -54,13 +56,23 @@ SW_ON       = $51               ; Switch on screen code
 SW_OFF      = $57               ; Switch off screen code
 CURSOR      = $3e               ; Cursor screen code
 
+; Display Constants
+SCREEN      = $1e00             ; Screen character memory (unexpanded)
+COLOR       = $9600             ; Screen color memory (unexpanded)
+PARCOL      = 3                 ; Parameter color (cyan)
+SELCOL      = 7                 ; Selected field color (yellow)
+STACOL      = 6                 ; Status line color (blue)
+
 ; Key Constants
 F1          = 39
 F3          = 47
 F5          = 55
 F7          = 63
-PREV        = 31
-NEXT        = 23
+PREV        = 31                ; CRSR up/down
+NEXT        = 23                ; CRSR left/right
+INCR        = 37                ; >
+DECR        = 29                ; <
+SEND2BUFF   = 35                ; B
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -78,8 +90,6 @@ F_RETRIG    = 9                 ; Unison retrigger ()
 CINV        = $0314             ; ISR vector
 NMINV       = $0318             ; Release NMI vector
 ;-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
-SCREEN      = $1e00             ; Screen character memory (unexpanded)
-COLOR       = $9600             ; Screen color memory (unexpanded)
 IRQ         = $eb12             ; System ISR return point
 VIC         = $9000             ; VIC starting address
 CHROUT      = $ffd2             ; Character out
@@ -88,6 +98,7 @@ CASECT      = $0291             ; Disable Commodore case
 SYSNMI      = $feb2             ; System NMI
 RFI         = $ff56             ; Return from interrupt
 KEY         = $c5               ; Pressed key
+HOME        = $e581             ; Home cursor
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
@@ -96,9 +107,10 @@ Welcome:    jsr $fd8d           ; Test RAM, initialize VIC chip
             jsr $fd52           ; Restore default I/O vectors
             jsr $fdf9           ; Initialize I/O registers
             jsr $e518           ; Initialize hardware
-            cli                 ; Clear interrupt flag from ROM jump
+            ; Fall through to Start
 
-Restart:    lda #$80            ; Disable Commodore-Shift
+Start:      sei                 ; IRQ unneeded for this application
+            lda #$80            ; Disable Commodore-Shift
             sta CASECT          ; ,,            
             lda #13             ; Screen color
             sta VIC+$0f         ; ,,
@@ -108,11 +120,12 @@ Restart:    lda #$80            ; Disable Commodore-Shift
             sta NMINV
             lda #>NMISR
             sta NMINV+1    
-            jsr SETIN      
+            jsr MIDIINIT  
             lda #0
             sta PAGE
             sta READY
 
+            ; Dev
             lda #<SYSEX         ; Unpack systex into the program buffer
             ldy #>SYSEX         ; ,,            
             jsr UnpBuff
@@ -121,65 +134,35 @@ Restart:    lda #$80            ; Disable Commodore-Shift
             jmp init_data
             
 MainLoop:   lda KEY             ; Debounce the key press
-            cmp #$40
-            bne MainLoop
-getkey:     bit READY
-            bmi SysexReady
-            lda KEY
-            cmp #$40
-            beq getkey
-            ldx #13
-            stx VIC+$0f
-            cmp #F1
-            beq PageSel
-            cmp #F3
-            beq PageSel
-            cmp #F5
-            beq PageSel
-            cmp #F7
-            beq PageSel
-            cmp #PREV
-            beq PrevField
-            cmp #NEXT
-            beq NextField
-            bne getkey
-            
-PageSel:    sec
-            sbc #39
-            lsr 
-            lsr 
-            lsr 
-            cmp PAGE
-            beq read_r
-            sta PAGE
-            jsr SwitchPage
-read_r:     jmp MainLoop
-            
-PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
-            beq pf_r            ; ,,
-            dey
-            lda FPage,y
-            cmp PAGE            ; If the field change would cross pages,
-            bne pf_r            ;   stay here
-            jsr ClrCursor
-            dey
-            sty FIELD_IX
-            jsr DrawCursor
-pf_r:       jmp MainLoop
+            cmp #$40            ; ,,
+            bne MainLoop        ; ,,
+waitkey:    bit READY           ; If Sysex is ready, handle it
+            bmi SysexReady      ; ,,
+            lda KEY             ; Get key press
+            sta KEYBUFF
+            cmp #$40            ; If no key down, wait
+            bne keydown         ; ,,
+            ldx #$28            ; Reset key repeat rate
+            stx REPEAT          ; ,,
+            jmp waitkey
+keydown:    ldx #13             ; Clear status indicator
+            stx VIC+$0f         ; ,,
+            tay                 ; Preserve key pressed
+            ldx #0              ; Look through Key Code table for a valid
+-loop:      lda KeyCode,x       ;   command key press
+            beq MainLoop        ;   ,, 0 delimits command list
+            cmp KEYBUFF
+            beq dispatch
+            inx
+            bne loop
+dispatch:   lda CommandH,x      ; Set dispatch address on the stack
+            pha                 ; ,,
+            lda CommandL,x      ; ,,
+            pha                 ; ,,
+            tya                 ; Put key pressed back in A
+            rts                 ; Dispatch command
 
-NextField:  ldy FIELD_IX
-            cpy #57
-            beq nf_r
-            iny
-            lda FPage,y
-            cmp PAGE
-            bne nf_r
-            jsr ClrCursor
-            iny
-            sty FIELD_IX
-            jsr DrawCursor
-nf_r:       jmp MainLoop
-
+; Handle Incoming SysEx
 SysexReady: clc                 ; Clear the sysex ready flag
             ror READY           ; ,,
             lda DATAPOS
@@ -201,23 +184,128 @@ sysexerr:   ldy #10
             jmp init_data
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; COMMANDS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;                        
+; Select Page           
+PageSel:    sec
+            sbc #39
+            lsr 
+            lsr 
+            lsr 
+            cmp PAGE
+            beq read_r
+            sta PAGE
+            jsr SwitchPage
+read_r:     jmp MainLoop
+
+; Move Cursor to Previous Field            
+PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
+            beq pf_r            ; ,,
+            dey
+            lda FPage,y
+            cmp PAGE            ; If the field change would cross pages,
+            bne pf_r            ;   stay here
+            jsr ClrCursor
+            dey
+            sty FIELD_IX
+            jsr DrawCursor
+pf_r:       jmp MainLoop
+
+; Move Cursor to Next Field
+NextField:  ldy FIELD_IX
+            cpy #57
+            beq nf_r
+            iny
+            lda FPage,y
+            cmp PAGE
+            bne nf_r
+            jsr ClrCursor
+            iny
+            sty FIELD_IX
+            jsr DrawCursor
+nf_r:       jmp MainLoop
+
+; Increment Field by 1
+IncValue:   jsr PrepField       ; Get field value
+            bcc id_r
+            cmp TRangeH,y
+            beq id_r            ; Already at maximum, so do nothing
+            inc CURRPRG,x
+id_draw:    ldy FIELD_IX
+            jsr DrawField
+            ldy FIELD_IX
+            lda FType,y
+            cmp #F_VALUE
+            beq no_deb
+            cmp #F_XVALUE
+            beq no_deb
+id_r:       jmp MainLoop
+no_deb:     ldx REPEAT
+-loop:      ldy #$ff
+-loop1:     dey
+            bne loop1
+            dex 
+            bpl loop
+            lda REPEAT
+            cmp #$08
+            bcc topspeed
+            dec REPEAT
+            dec REPEAT
+topspeed:   jmp waitkey
+
+; Decrement Field by 1
+DecValue:   jsr PrepField       ; Get field value
+            bcc id_r
+            cmp TRangeL,y
+            beq id_r           ; Already at minimum, so do nothing
+            dec CURRPRG,x
+            jmp id_draw
+            
+BufferSend: lda #<EditBuffer
+            ldy #>EditBuffer
+            jsr SysexMsg
+            lda PTR
+            sta P_RESULT
+            lda PTR+1
+            sta P_RESULT+1
+            lda #<CURRPRG
+            sta P_START
+            clc
+            adc #$80
+            sta P_END
+            lda #>CURRPRG
+            sta P_START+1
+            sta P_END+1
+            jsr Pack
+            ldy #1
+            lda #ST_ENDSYSEX
+            sta (P_END),y
+            lda #<OUTSYSEX
+            ldy #>OUTSYSEX
+            jsr SendSysex
+            jmp MainLoop
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Prepare Field
+; for increment or decrement
+PrepField:  ldy FIELD_IX
+            lda FNRPN,y
+            tax
+            lda FType,y
+            cmp #F_NAME
+            beq no_decinc
+            tay
+            lda CURRPRG,x
+            sec
+            rts
+no_decinc:  clc
+            rts
+
 ; Draw Edit Page
 ; at PAGE
-SwitchPage: lda #CLSC           ; Clear the screen
-            jsr CHROUT          ; ,,
-            lda #CR             ; One space at the top of each screen
-            jsr CHROUT          ; ,,
-            ldy #0              ; Set color memory to the parameter color
-            lda #1              ;   to make parameters distinct from
--loop:      sta COLOR,y         ;   labels
-            sta COLOR+$0100,y   ;   ,,
-            dey                 ;   ,,
-            bne loop            ;   ,,
-            lda #2              ; Red for the MIDI IN indicator
-            sta COLOR+504       ;   ,,
-            sta COLOR+505       ;   ,,
+SwitchPage: jsr ClrScr
             ldx PAGE            ; Acquire current page index
             lda EditH,x         ; Draw that page's field labels
             tay                 ; ,,
@@ -251,7 +339,14 @@ DrawCursor: ldy FIELD_IX
             lda #CURSOR
             ldx #0
             sta (FIELD,x)
-            rts
+            lda FType,y         ; Color the field the selected color only
+            cmp #F_SWITCH       ;   if it's a switch
+            bne dc_r            ;   ,,
+            jsr FieldColor      ;   ,,
+            lda #SELCOL         ;   ,,
+            ldx #0              ;   ,,
+            sta (FIELD,x)       ;   ,,
+dc_r:       rts
           
 ; Clear Previous Cursor 
 ClrCursor:  ldy FIELD_IX        ; Remove the previous cursor
@@ -260,6 +355,10 @@ ClrCursor:  ldy FIELD_IX        ; Remove the previous cursor
             lda #" "            ; ,,
             ldx #0              ; ,,
             sta (FIELD,x)       ; ,,
+            jsr FieldColor
+            lda #PARCOL
+            ldx #0
+            sta (FIELD,x)
             rts
             
 ; Draw Field
@@ -280,7 +379,7 @@ DrawField:  jsr FieldLoc        ; Set the field's physical screen location
 ; Field index is in Y  
 FieldLoc:   lda FRow,y
             jsr FieldRow
-            lda FCol,y
+pluscol:    lda FCol,y
             clc 
             adc FIELD
             sta FIELD
@@ -288,6 +387,16 @@ FieldLoc:   lda FRow,y
             inc FIELD+1
 f_nc2:      rts
 
+; Set Field Color Location
+; Field index is in Y
+FieldColor: ldx #<COLOR
+            stx FIELD
+            ldx #>COLOR
+            stx FIELD+1
+            lda FRow,y
+            jsr moffset
+            jmp pluscol
+            
 ; Set Field Row
 ; Multiply A by 22 and add to SCREEN+22
 ; Store result in FIELD pointer
@@ -295,7 +404,7 @@ FieldRow:   ldx #<SCREEN
             stx FIELD
             ldx #>SCREEN
             stx FIELD+1
-            tax
+moffset:    tax
 -loop:      clc
             lda #22
             adc FIELD
@@ -371,7 +480,58 @@ b_c0:       and #$7f
             rts
 pi:         lda #$5E
             rts   
-
+            
+; Clear Screen
+ClrScr:     ldx #242            ; Clear the entire screen, except for the
+-loop:      lda #$20            ;   bottom row, which is used for MIDI status
+            sta SCREEN,x        ;   ,,
+            sta SCREEN+242,x    ;   ,,
+            lda #PARCOL         ;   ,, (for parameters)
+            sta COLOR,x         ;   ,,
+            sta COLOR+242,x     ;   ,,
+            dex                 ;   ,,
+            cpx #$ff            ;   ,,
+            bne loop            ;   ,,
+            lda #STACOL         ; Status line color
+            ldx #22             ; ,,
+-loop:      sta COLOR+484,x     ; ,,
+            dex                 ; ,,
+            bpl loop            ; ,,
+            jmp HOME
+            
+; Construct Sysex Message
+; from A=high/Y=low to OUTSYSEX
+SysexMsg:   sta PTR
+            sty PTR
+            ldy #$ff
+-loop:      iny
+            lda (PTR),y
+            beq msg_done
+            sta OUTSYSEX,y
+            bne loop
+msg_done:   tya
+            clc
+            adc PTR
+            sta PTR
+            bcc sm_r
+            inc PTR+1
+sm_r:       rts
+            
+; Send Sysex
+; from A=low / Y=high
+SendSysex:  sta DATAPOS         ; Set data position
+            sty DATAPOS+1       ; ,,
+            ldx #0              ; For indexed addressing
+-loop:      lda (DATAPOS,x)     ; Get the next byte
+            jsr MIDIOUT         ; Send it to MIDI
+            cmp #ST_ENDSYSEX    ; End of sysex?
+            beq send_r          ; If so, end
+            inc DATAPOS         ; Increment the byte
+            bne send_c          ; ,,
+            inc DATAPOS+1       ; ,,
+send_c:     jmp loop
+send_r:     rts
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERRUPT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -404,19 +564,27 @@ nc_isr:     cmp #$f7
             sec
             ror READY
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
-dataind:    pha 
-            lsr
-            lsr
-            lsr
-            lsr
-            jsr hexb
-            sta SCREEN+504
-            pla
-            pha
-            and #$0f
-            jsr hexb
-            sta SCREEN+505
-            pla
+dataind:    ldx SCREEN+501      ; Unrolled loop to show the most recent three
+            stx SCREEN+498      ; MIDI bytes
+            ldx SCREEN+502      ; ,,
+            stx SCREEN+499      ; ,,
+            ldx SCREEN+504      ; ,,
+            stx SCREEN+501      ; ,,
+            ldx SCREEN+505      ; ,,
+            stx SCREEN+502      ; ,,
+            pha                 ; Show the high nybble onscreen as hex
+            lsr                 ; ,,
+            lsr                 ; ,,
+            lsr                 ; ,,
+            lsr                 ; ,,
+            jsr hexb            ; ,,
+            sta SCREEN+504      ; ,,
+            pla                 ; Show the low nybble onscreen as hex
+            pha                 ; ,,
+            and #$0f            ; ,,
+            jsr hexb            ; ,,
+            sta SCREEN+505      ; ,,
+            pla                 ; ,,
             rts
 hexb:       cmp #$0a 
             bcs hexl 
@@ -513,7 +681,7 @@ r_ch_2:     cmp #2
 r_ch_1:     cmp #1
             bne r_0:
             lda #<LOR
-            lda #>LOR
+            ldy #>LOR
             jmp WriteText
 r_0:        lda #<LO
             ldy #>LO
@@ -540,6 +708,9 @@ small:      ora #$30            ; Add #$30 to make a screen code
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; MIDI Messages and Headers
+EditBuffer: .byte $f0, $01, $31, $03, 0
+
 ; Value Bar Partials
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 
@@ -547,6 +718,15 @@ BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3
 TopParamIX: .byte 0,      16,     29,     45
+
+; Key command subtroutine addresses
+KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,0
+CommandL:   .byte <PageSel-1,<PageSel-1,<PageSel-1,<PageSel-1
+            .byte <PrevField-1,<NextField-1,<IncValue-1,<DecValue-1
+            .byte <BufferSend-1
+CommandH:   .byte >PageSel-1,>PageSel-1,>PageSel-1,>PageSel-1
+            .byte >PrevField-1,>NextField-1,>IncValue-1,>DecValue-1
+            .byte >BufferSend-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
@@ -612,7 +792,7 @@ FNRPN:      .byte 3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
 
             
 ; Edit Page Fields
-Edit0:      .asc "OSCILLATOR A",CR
+Edit0:      .asc CR,"OSCILLATOR A",CR
             .asc RT,W_SAW,W_SAW2,RT,RT,W_SQU,W_SQU2,CR
             .asc RT,"FREQUENCY",CR
             .asc RT,"PULSE WIDTH",CR
@@ -630,7 +810,7 @@ Edit0:      .asc "OSCILLATOR A",CR
             .asc RT,"NOISE"
             .asc 00
                       
-Edit1:      .asc "FILTER",CR
+Edit1:      .asc CR,"FILTER",CR
             .asc RT,"CUTOFF",CR
             .asc RT,"RESONANCE",CR
             .asc RT,"ENV AMOUNT",CR
@@ -647,7 +827,7 @@ Edit1:      .asc "FILTER",CR
             .asc RT,"RELEASE"
             .asc 00
             
-Edit2:      .asc "POLY-MOD",CR
+Edit2:      .asc CR,"POLY-MOD",CR
             .asc RT,"FILT ENV AMT",CR
             .asc RT,"OSC B AMT",CR
             .asc RT,"FREQ A",CR
@@ -666,8 +846,7 @@ Edit2:      .asc "POLY-MOD",CR
             .asc RT,"FILTER"
             .asc 00
                         
-Edit3:      .asc "NAME",CR
-            .asc CR
+Edit3:      .asc CR,"NAME",CR,CR
             .asc CR,"UNISON",CR
             .asc RT,"ON",CR
             .asc RT,"RETRIGGER",CR
@@ -679,7 +858,7 @@ Edit3:      .asc "NAME",CR
             .asc RT,"WHEEL RANGE",CR
             .asc RT,"VEL : FILTER",CR
             .asc RT,"    : AMP",CR
-            .asc RT,"AT  : FILTER",CR
+            .asc RT,"AFT : FILTER",CR
             .asc RT,"    : LFO",CR
             .asc RT,"RELEASE/HOLD"
             .asc 00            

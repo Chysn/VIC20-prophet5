@@ -1,0 +1,7 @@
+#!/bin/bash
+
+./build
+diskutil mount /Volumes/VIC20/
+cp ./vic/p5ed /Volumes/VIC20/
+diskutil unmount /Volumes/VIC20/
+
