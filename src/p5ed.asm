@@ -17,7 +17,7 @@
 ; CARTRIDGE LAUNCHER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 * = $6000
-Vectors:    .word Welcome       ; Welcome Screen
+Vectors:    .word Start         ; Start
             .word NMISR         ; NMI Address
             .byte $41,$30,$c3,$c2,$cd  ; Uncomment for production
            ; .byte $ff,$ff,$ff,$ff,$ff  ; Uncomment for development
@@ -30,8 +30,8 @@ Vectors:    .word Welcome       ; Welcome Screen
 ; MIDI KERNAL uses $9b - $9f
 ; SEQ PACKING uses $f9 - $ff
 FIELD       = $00               ; Pointer to field memory location (2 bytes)
-DATAPOS     = $02               ; Data position pointer (2 bytes)
-PTR         = $04               ; General use pointer
+SYIN_IX     = $02               ; Sysex In position index
+PTR         = $03               ; General use pointer (2 bytes)
 READY       = $033c             ; New sysex is ready
 PAGE        = $033d             ; Current page number
 FIELD_IX    = $033e             ; Current field index
@@ -39,9 +39,24 @@ LISTEN      = $033f             ; Sysex listen flag
 TOGGLE      = $0340             ; General use toggle value
 REPEAT      = $0341             ; Repeat speed
 KEYBUFF     = $0342             ; Last key pressed
-OUTSYSEX    = $1100             ; Outgoing sysex
-CURRPRG     = $1200             ; Current program indexed buffer (128 bytes)
-SYSEX       = $1400             ; System exclusive storage (8 programs,$A0 ea.)
+OUTSYSEX    = $1200             ; Outgoing sysex stage
+INSYSEX     = $1300             ; Incoming sysex stage
+CURRPRG     = $1400             ; Current program indexed buffer (128 bytes)
+
+; Packing memory, for forward references
+; Otherwise XA generates absolute mode rather than ZP
+P_START     = $f9               ; Start address, 2 bytes
+P_END       = $fb               ; End address, 2 bytes
+P_RESULT    = $fd               ; Result address, 2 bytes
+P_SIZE      = $ff               ; Size of packet
+P_SRC       = $60               ; Source packet, 8 bytes
+P_DEST      = $68               ; Destination packet, 8 bytes
+
+; Status Message Indices
+SM_FAIL     = 0
+SM_RECV     = 1
+SM_SENT     = 2
+SM_WELCOME  = 3
 
 ; Character Constants
 CR          = $0d               ; Carriage return PETSCII
@@ -54,14 +69,15 @@ W_SQU       = $a7               ; Square waveform
 W_SQU2      = $d0               ; ,,
 SW_ON       = $51               ; Switch on screen code
 SW_OFF      = $57               ; Switch off screen code
-CURSOR      = $3e               ; Cursor screen code
+CURSOR      = $2d               ; Cursor screen code PETSCII
+TL          = $a3               ; Top line PETSCII
 
 ; Display Constants
-SCREEN      = $1e00             ; Screen character memory (unexpanded)
-COLOR       = $9600             ; Screen color memory (unexpanded)
+SCREEN      = $1000             ; Screen character memory (expanded)
+COLOR       = $9400             ; Screen color memory (expanded)
 PARCOL      = 3                 ; Parameter color (cyan)
 SELCOL      = 7                 ; Selected field color (yellow)
-STACOL      = 6                 ; Status line color (blue)
+STACOL      = 2                 ; Status line color (red)
 
 ; Key Constants
 F1          = 39
@@ -84,7 +100,8 @@ F_WHEEL     = 5                 ; Wheel Range 0-12
 F_FILTER    = 6                 ; Filter type (1/2, 3)
 F_NAME      = 7                 ; Program name
 F_COUNT     = 8                 ; Voice count 0-10
-F_RETRIG    = 9                 ; Unison retrigger ()
+F_RETRIG    = 9                 ; Unison retrigger (LO, LOR, LAS, LAR)
+F_FREQ      = 10                ; Frequency (C0 ~ C4)
 
 ; System Resources
 CINV        = $0314             ; ISR vector
@@ -99,17 +116,18 @@ SYSNMI      = $feb2             ; System NMI
 RFI         = $ff56             ; Return from interrupt
 KEY         = $c5               ; Pressed key
 HOME        = $e581             ; Home cursor
+CLSR        = $e55f             ; Clear screen
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;            
-Welcome:    jsr $fd8d           ; Test RAM, initialize VIC chip
+Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             jsr $fd52           ; Restore default I/O vectors
             jsr $fdf9           ; Initialize I/O registers
             jsr $e518           ; Initialize hardware
-            ; Fall through to Start
 
-Start:      sei                 ; IRQ unneeded for this application
+            sei                 ; IRQ unneeded for this application
+            jsr CLSR            ; Clear screen
             lda #$80            ; Disable Commodore-Shift
             sta CASECT          ; ,,            
             lda #13             ; Screen color
@@ -121,18 +139,29 @@ Start:      sei                 ; IRQ unneeded for this application
             lda #>NMISR
             sta NMINV+1    
             jsr MIDIINIT  
-            lda #0
-            sta PAGE
-            sta READY
+            lda INSYSEX         ; Is there sysex in the starting position?
+            cmp #ST_SYSEX       ; ,,
+            bne clearprg        ; ,,
+            lda #<INSYSEX       ; Unpack systex into the program buffer
+            ldy #>INSYSEX       ; ,,            
+            jsr UnpBuff         ; ,,
+            jmp startpage       ; ,,
+clearprg:   ldy #$80            ; If no sysex was in memory, clear out
+            lda #0              ;   the current program memory
+-loop:      sta CURRPRG,y       ;   ,,
+            dey                 ;   ,,
+            bpl loop            ;   ,,
+startpage:  lda #0              ; Initialize
+            sta READY           ;   * Sysex ready flag
+            sta LISTEN          ;   * Sysex listen flag
+            sta PAGE            ;   * Edit screen number
+            jsr SwitchPage      ; Generate the edit screen
+            ldx #SM_WELCOME     ; Show welcome status
+            jsr Status
+            ; Fall through to MainLoop
 
-            ; Dev
-            lda #<SYSEX         ; Unpack systex into the program buffer
-            ldy #>SYSEX         ; ,,            
-            jsr UnpBuff
-
-            jsr SwitchPage
-            jmp init_data
-            
+; Main Program Loop
+; Wait for a key, then act on valid commands            
 MainLoop:   lda KEY             ; Debounce the key press
             cmp #$40            ; ,,
             bne MainLoop        ; ,,
@@ -145,9 +174,7 @@ waitkey:    bit READY           ; If Sysex is ready, handle it
             ldx #$28            ; Reset key repeat rate
             stx REPEAT          ; ,,
             jmp waitkey
-keydown:    ldx #13             ; Clear status indicator
-            stx VIC+$0f         ; ,,
-            tay                 ; Preserve key pressed
+keydown:    tay                 ; Preserve key pressed
             ldx #0              ; Look through Key Code table for a valid
 -loop:      lda KeyCode,x       ;   command key press
             beq MainLoop        ;   ,, 0 delimits command list
@@ -165,23 +192,19 @@ dispatch:   lda CommandH,x      ; Set dispatch address on the stack
 ; Handle Incoming SysEx
 SysexReady: clc                 ; Clear the sysex ready flag
             ror READY           ; ,,
-            lda DATAPOS
-            cmp #$9f
-            bne sysexerr
-            lda #14
-            sta VIC+$0f
-            lda #<SYSEX         ; Unpack systex into the program buffer
-            ldy #>SYSEX         ; ,,
+            lda SYIN_IX
+            cmp #$9e
+            bne SysexFail
+            ldx #SM_RECV
+            jsr Status
+            lda #<INSYSEX       ; Unpack systex into the program buffer
+            ldy #>INSYSEX       ; ,,
             jsr UnpBuff         ; ,,
             jsr SwitchPage
-init_data:  ldy #<SYSEX         ; Initialize sysex storage pointer
-            sty DATAPOS         ;   ,,
-            ldy #>SYSEX         ;   ,,
-            sty DATAPOS+1       ;   ..
             jmp MainLoop
-sysexerr:   ldy #10
-            sty VIC+$0f
-            jmp init_data
+SysexFail:  ldx #SM_FAIL
+            jsr Status
+            jmp MainLoop
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; COMMANDS
@@ -213,7 +236,7 @@ pf_r:       jmp MainLoop
 
 ; Move Cursor to Next Field
 NextField:  ldy FIELD_IX
-            cpy #57
+            cpy #LFIELD - FPage
             beq nf_r
             iny
             lda FPage,y
@@ -234,11 +257,13 @@ IncValue:   jsr PrepField       ; Get field value
 id_draw:    ldy FIELD_IX
             jsr DrawField
             ldy FIELD_IX
-            lda FType,y
-            cmp #F_VALUE
-            beq no_deb
-            cmp #F_XVALUE
-            beq no_deb
+            lda FType,y         ; Some field types should not debounce the
+            cmp #F_VALUE        ;   key, so check those types here
+            beq no_deb          ;   ,,
+            cmp #F_XVALUE       ;   ,,
+            beq no_deb          ;   ,,
+            cmp #F_FREQ         ;   ,,
+            beq no_deb          ;   ,,
 id_r:       jmp MainLoop
 no_deb:     ldx REPEAT
 -loop:      ldy #$ff
@@ -260,7 +285,9 @@ DecValue:   jsr PrepField       ; Get field value
             beq id_r           ; Already at minimum, so do nothing
             dec CURRPRG,x
             jmp id_draw
-            
+
+; Send Edit Buffer
+; From the current program        
 BufferSend: lda #<EditBuffer
             ldy #>EditBuffer
             jsr SysexMsg
@@ -271,19 +298,19 @@ BufferSend: lda #<EditBuffer
             lda #<CURRPRG
             sta P_START
             clc
-            adc #$80
+            adc #$88
             sta P_END
             lda #>CURRPRG
             sta P_START+1
             sta P_END+1
             jsr Pack
-            ldy #1
             lda #ST_ENDSYSEX
-            sta (P_END),y
-            lda #<OUTSYSEX
-            ldy #>OUTSYSEX
+            sta OUTSYSEX+$9c
             jsr SendSysex
-            jmp MainLoop
+            bcs bsend_r
+            ldx #SM_SENT
+            jsr Status
+bsend_r:    jmp MainLoop
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBROUTINES
@@ -482,16 +509,33 @@ pi:         lda #$5E
             rts   
             
 ; Clear Screen
-ClrScr:     ldx #242            ; Clear the entire screen, except for the
+; And color appropriately
+ClrScr:     ldx #248            ; Clear the entire screen, except for the
 -loop:      lda #$20            ;   bottom row, which is used for MIDI status
             sta SCREEN,x        ;   ,,
-            sta SCREEN+242,x    ;   ,,
+            sta SCREEN+248,x    ;   ,,
             lda #PARCOL         ;   ,, (for parameters)
             sta COLOR,x         ;   ,,
             sta COLOR+242,x     ;   ,,
             dex                 ;   ,,
             cpx #$ff            ;   ,,
             bne loop            ;   ,,
+            lda #<COLOR         ; Set margin cursor to the select color
+            sta PTR             ; ,,
+            lda #>COLOR         ; ,,
+            sta PTR+1           ; ,,
+            ldy #22             ; ,,
+            ldx #0              ; ,,
+-loop:      lda #SELCOL         ; ,,
+            sta (PTR,x)         ; ,,
+            lda PTR             ; ,,
+            clc                 ; ,,
+            adc #22             ; ,,
+            sta PTR             ; ,,
+            bcc nc_cl           ; ,,
+            inc PTR+1           ; ,,
+nc_cl:      dey                 ; ,,
+            bne loop            ; ,,
             lda #STACOL         ; Status line color
             ldx #22             ; ,,
 -loop:      sta COLOR+484,x     ; ,,
@@ -501,37 +545,56 @@ ClrScr:     ldx #242            ; Clear the entire screen, except for the
             
 ; Construct Sysex Message
 ; from A=high/Y=low to OUTSYSEX
+; PTR points to the next byte in the sysex output stage
 SysexMsg:   sta PTR
-            sty PTR
+            sty PTR+1
             ldy #$ff
 -loop:      iny
             lda (PTR),y
+            cmp #$ff
             beq msg_done
             sta OUTSYSEX,y
             bne loop
 msg_done:   tya
             clc
-            adc PTR
+            adc #<OUTSYSEX
             sta PTR
-            bcc sm_r
-            inc PTR+1
+            lda #>OUTSYSEX
+            sta PTR+1
 sm_r:       rts
             
 ; Send Sysex
-; from A=low / Y=high
-SendSysex:  sta DATAPOS         ; Set data position
-            sty DATAPOS+1       ; ,,
-            ldx #0              ; For indexed addressing
--loop:      lda (DATAPOS,x)     ; Get the next byte
-            jsr MIDIOUT         ; Send it to MIDI
-            cmp #ST_ENDSYSEX    ; End of sysex?
-            beq send_r          ; If so, end
-            inc DATAPOS         ; Increment the byte
-            bne send_c          ; ,,
-            inc DATAPOS+1       ; ,,
-send_c:     jmp loop
-send_r:     rts
-            
+; Returns with carry set if error
+SendSysex:  ldy #0
+-loop:      lda OUTSYSEX,y
+            jsr Monitor
+            jsr MIDIOUT
+            bcs send_err
+            cmp #ST_ENDSYSEX
+            beq send_r
+            iny
+            bne loop
+send_err:   ldx #SM_FAIL
+            jsr Status
+            sec 
+            rts
+send_r:     clc
+            rts
+
+; Display Status Message
+; in X            
+Status:     pha
+            lda #<(SCREEN+484)
+            sta FIELD
+            lda #>(SCREEN+484)
+            sta FIELD+1
+            lda StatusH,x
+            tay 
+            lda StatusL,x
+            jsr WriteText
+            pla
+            rts
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERRUPT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -545,26 +608,32 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             bne midi            ;   If so, handle MIDI input
             jmp SYSNMI          ; Back to normal NMI, after register saves
 midi:       jsr MIDIIN
-            jsr dataind         ; Show data byte indicator
-            cmp #$f0            ; If sysex, 
-            bne ch_catch        ;   initialize storage pointer
+            jsr Monitor         ; Show MIDI byte indicator
+            cmp #ST_SYSEX       ; If sysex, 
+            bne sy_catch        ;   initialize storage index
             sec                 ;   and set sysex listen flag
             ror LISTEN          ;   ,,
-ch_catch:   bit LISTEN          ; If sysex listen flag is on, store the byte to
+            ldx #0              ;   ,,
+            stx SYIN_IX         ;   ,,
+sy_catch:   bit LISTEN          ; If sysex listen flag is on, store the byte to
             bpl r_isr           ;   specified memory
-sy_store:   ldx #0              ; Clear X to use as indirect index
-            sta (DATAPOS,x)     ; Save data byte
-            inc DATAPOS         ; Increment storage pointer
-            bne nc_isr          ; ,,
-            inc DATAPOS+1       ; ,,
-nc_isr:     cmp #$f7
-            bne r_isr
-            clc
-            ror LISTEN
-            sec
-            ror READY
+sy_store:   ldx SYIN_IX         ; Get the index and store the byte there
+            sta INSYSEX,x       ; ,,
+            cmp #ST_ENDSYSEX    ; If the sysex has ended, perform end
+            beq sydone          ; ,,
+            inc SYIN_IX         ; Increment storage index. If it exceeds 255,
+            bne r_isr           ;   end the sysex, for a likely error status
+sydone:     clc                 ;   ,,
+            ror LISTEN          ;   ,,
+            sec                 ;   ,,
+            ror READY           ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
-dataind:    ldx SCREEN+501      ; Unrolled loop to show the most recent three
+
+
+; Show MIDI Monitor
+; Of a byte in A
+; Last three bytes
+Monitor:    ldx SCREEN+501      ; Unrolled loop to show the most recent three
             stx SCREEN+498      ; MIDI bytes
             ldx SCREEN+502      ; ,,
             stx SCREEN+499      ; ,,
@@ -704,12 +773,47 @@ small:      ora #$30            ; Add #$30 to make a screen code
             lda #" "            ; ,,
             sta (FIELD),y       ; ,,
             rts
+
+; Draw Frequency (C 0 - C 4)            
+Freq:       cmp #$61            ; Maximum value (for display purposes) is C4
+            bcc getoct          ; ,, even though the P5 OS allows the full range
+            lda #$60            ; ,,
+getoct:     lsr                 ; Divide the value by 2 (2 increments per note)
+            ldx #0              ; Get the octave number by subtracting 12
+-loop:      cmp #12             ;   for each octave. The octave number will be 
+            bcc haveoct         ;   X, and the note is the remainder, A
+            ;sec                ;   ,, (we know carry is already set)
+            sbc #12             ;   ,,
+            inx
+            bne loop            ;   ,,
+haveoct:    pha                 ; Save the note number for later lookup
+            txa                 ; A is now the octave number
+            ora #$30            ; A is now the octave number digit character
+            ldy #2              ; Y is the offset for the field location
+            sta (FIELD),y       ; ,,
+            pla                 ; Get note number back and use it as an index
+            tax                 ;   to the note name and accidental tables
+            lda Accidental,x    ;   ,,
+            dey                 ;   ,,
+            sta (FIELD),y       ;   ,,
+            lda NoteName,x      ;   ,,
+            dey                 ;   ,,
+            sta (FIELD),y       ;   ,,
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; DATA
+; DATA TABLES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Status messages
+Failed:     .asc "FAILED!     ",0
+Received:   .asc "RECEIVED OK ",0
+Sent:       .asc "SENT OK     ",0
+Welcome:    .asc "ED PROPHET 5",0
+StatusL:    .byte <Failed,<Received,<Sent,<Welcome
+StatusH:    .byte >Failed,>Received,>Sent,>Welcome
+
 ; MIDI Messages and Headers
-EditBuffer: .byte $f0, $01, $31, $03, 0
+EditBuffer: .byte $f0, $01, $32, $03, $ff
 
 ; Value Bar Partials
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
@@ -730,13 +834,13 @@ CommandH:   .byte >PageSel-1,>PageSel-1,>PageSel-1,>PageSel-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
-; 7=Name, 8=Unison Voice Count, 9=Unison Retrigger
-TSubL:      .byte <ValBar-1,<ValBar-1,<Switch-1
-            .byte <Track-1,<Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1
-TSubH:      .byte >ValBar-1,>ValBar-1,>Switch-1
-            .byte >Track-1,>Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0
-TRangeH:    .byte 120,127,1,2,7,11,1,90,10, 3
+; 7=Name, 8=Unison Voice Count, 9=Unison Retrigger, A=Frequency
+TSubL:      .byte <ValBar-1,<ValBar-1,<Switch-1,<Track-1
+            .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
+TSubH:      .byte >ValBar-1,>ValBar-1,>Switch-1,>Track-1
+            .byte >Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1,>Freq-1
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0
+TRangeH:    .byte 120,127,1,2,7,11,1,90,10, 3,120
 
 ; Enum field values
 NoTrack:    .asc "NONE",0
@@ -749,48 +853,54 @@ LOR:        .asc "LOR",0
 LAS:        .asc "LAS",0
 LAR:        .asc "LAR",0
 
+; Note Name Tables
+; Flats are constructed of two screen code characters, Commodre-M and
+; Commodore-S
+NoteName:   .asc   3,  3,  4,  4,  5,  6,  6,  7,  7,  1,  1,  2
+Accidental: .asc ' ','#',' ','#',' ',' ','#',' ','#',' ','#',' '
+
 ; Field data
 ; Field page number (0-3)
 FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
-            .byte $80 ; Delimiter to end field list
+            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3,3
+LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
 ; Field row
 FRow:       .byte 1,1,2,3,4,7,7,7,8,9,10,11,12,15,16,17
             .byte 1,2,3,4,5,7,8,9,10,13,14,15,16
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
-            .byte 1,4,5,6,7,10,11,12,13,14,15,16,17
+            .byte 1,4,5,6,7,10,11,12,13,14,15,16,17,18,19
 
 ; Field column
 FCol:       .byte 3,8,14,14,10,3,8,12,14,14,14,10,10,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14  
             .byte 14,14,8,8,8,14,14,3,8,12,14,8,8,8,8,8
-            .byte 1,14,14,14,14,14,14,14,14,14,14,14,14
+            .byte 1,14,14,14,14,14,14,14,14,14,14,14,14,14,14
 
 ; Field type
-FType:      .byte F_SWITCH,F_SWITCH,F_VALUE,F_VALUE,F_SWITCH,F_SWITCH,F_SWITCH
-            .byte F_SWITCH,F_VALUE,F_XVALUE,F_VALUE,F_SWITCH,F_SWITCH
+FType:      .byte F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH,F_SWITCH
+            .byte F_SWITCH,F_FREQ,F_XVALUE,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_VALUE,F_VALUE,F_VALUE
             
             .byte F_VALUE,F_VALUE,F_VALUE,F_TRACK,F_FILTER,F_VALUE,F_VALUE
             .byte F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE
             
-            .byte F_VALUE,F_VALUE,F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_VALUE
+            .byte F_XVALUE,F_VALUE,F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_VALUE
             .byte F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_SWITCH,F_SWITCH
             
-            .byte F_NAME,F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
-            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_SWITCH,F_SWITCH,F_SWITCH
+            .byte F_NAME,F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_XVALUE,F_VALUE
+            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_XVALUE
+            .byte F_SWITCH,F_SWITCH,F_XVALUE,F_SWITCH
 
 ; Field NRPN number
 FNRPN:      .byte 3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,43,45,47,49,44,46,48,50
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
-            .byte 88,52,87,53,54,13,37,86,41,42,38,39,51
+            .byte 88,52,87,53,54,13,37,86,41,42,97,38,39,98,51
 
-            
 ; Edit Page Fields
 Edit0:      .asc CR,"OSCILLATOR A",CR
             .asc RT,W_SAW,W_SAW2,RT,RT,W_SQU,W_SQU2,CR
@@ -856,10 +966,12 @@ Edit3:      .asc CR,"NAME",CR,CR
             .asc RT,"GLIDE RATE",CR
             .asc RT,"VINTAGE",CR
             .asc RT,"WHEEL RANGE",CR
-            .asc RT,"VEL : FILTER",CR
-            .asc RT,"    : AMP",CR
-            .asc RT,"AFT : FILTER",CR
-            .asc RT,"    : LFO",CR
+            .asc RT,"VEL > FILTER",CR
+            .asc RT,TL,TL,TL," > AMP",CR
+            .asc RT,"      AMT",CR
+            .asc RT,"AFT > FILTER",CR
+            .asc RT,TL,TL,TL," > LFO",CR
+            .asc RT,"      AMT",CR
             .asc RT,"RELEASE/HOLD"
             .asc 00            
 
