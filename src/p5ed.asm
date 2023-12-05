@@ -1,6 +1,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
-;                               Prophet 5 Editor
+;                               Ed for Prophet 5
 ;                            (c)2023, Jason Justian
 ;                  
 ; Assembled with XA
@@ -39,9 +39,14 @@ LISTEN      = $033f             ; Sysex listen flag
 TOGGLE      = $0340             ; General use toggle value
 REPEAT      = $0341             ; Repeat speed
 KEYBUFF     = $0342             ; Last key pressed
+IX          = $0343             ; General use index
+NRPN_TX     = $0344             ; NRPN Transmit toggle
+PRGLOC      = $0345             ; Program location screen codes (3 bytes)
+LIB_IX      = $0348             ; Last library index
 OUTSYSEX    = $1200             ; Outgoing sysex stage
 INSYSEX     = $1300             ; Incoming sysex stage
 CURRPRG     = $1400             ; Current program indexed buffer (128 bytes)
+LIBRARY     = $2000             ; Storage for 40 programs (160x40=6400 bytes)
 
 ; Packing memory, for forward references
 ; Otherwise XA generates absolute mode rather than ZP
@@ -69,8 +74,9 @@ W_SQU       = $a7               ; Square waveform
 W_SQU2      = $d0               ; ,,
 SW_ON       = $51               ; Switch on screen code
 SW_OFF      = $57               ; Switch off screen code
-CURSOR      = $2d               ; Cursor screen code PETSCII
+CURSOR      = $6c               ; Cursor screen code PETSCII
 TL          = $a3               ; Top line PETSCII
+TXTCURSOR   = $6f               ; Text edit cursor
 
 ; Display Constants
 SCREEN      = $1000             ; Screen character memory (expanded)
@@ -78,6 +84,7 @@ COLOR       = $9400             ; Screen color memory (expanded)
 PARCOL      = 3                 ; Parameter color (cyan)
 SELCOL      = 7                 ; Selected field color (yellow)
 STACOL      = 2                 ; Status line color (red)
+STATUSDISP  = SCREEN+484        ; Status line starting location
 
 ; Key Constants
 F1          = 39
@@ -89,6 +96,8 @@ NEXT        = 23                ; CRSR left/right
 INCR        = 37                ; >
 DECR        = 29                ; <
 SEND2BUFF   = 35                ; B
+EDIT        = 15                ; Edit parameter
+BACKSP      = 7                 ; Backspace
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -117,6 +126,7 @@ RFI         = $ff56             ; Return from interrupt
 KEY         = $c5               ; Pressed key
 HOME        = $e581             ; Home cursor
 CLSR        = $e55f             ; Clear screen
+KEYMAP      = $ec5e             ; Key to character map
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
@@ -155,6 +165,8 @@ startpage:  lda #0              ; Initialize
             sta READY           ;   * Sysex ready flag
             sta LISTEN          ;   * Sysex listen flag
             sta PAGE            ;   * Edit screen number
+            sta NRPN_TX         ;   * NRPN Transmit
+            sta LIB_IX          ;   * Last library entry index
             jsr SwitchPage      ; Generate the edit screen
             ldx #SM_WELCOME     ; Show welcome status
             jsr Status
@@ -187,7 +199,7 @@ dispatch:   lda CommandH,x      ; Set dispatch address on the stack
             lda CommandL,x      ; ,,
             pha                 ; ,,
             tya                 ; Put key pressed back in A
-            rts                 ; Dispatch command
+            rts                 ; Dispatch command with key in A
 
 ; Handle Incoming SysEx
 SysexReady: clc                 ; Clear the sysex ready flag
@@ -195,12 +207,23 @@ SysexReady: clc                 ; Clear the sysex ready flag
             lda SYIN_IX
             cmp #$9e
             bne SysexFail
-            ldx #SM_RECV
-            jsr Status
+            ldx #SM_RECV        ; Show received success status
+            jsr Status          ; ,,
+            jsr ProgLoc         ; Get program location from in buffer
+            ldy #2              ; Show received program number
+-loop:      lda PRGLOC,y        ; ,,
+            sta STATUSDISP+9,y  ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
             lda #<INSYSEX       ; Unpack systex into the program buffer
             ldy #>INSYSEX       ; ,,
             jsr UnpBuff         ; ,,
-            jsr SwitchPage
+            ldx LIB_IX          ; Move in buffer to library, then advance
+            jsr MoveToLib       ;   library index
+            cpx #39             ;   ,,
+            beq lib_done        ;   ,,
+            inc LIB_IX          ;   ,,
+lib_done:   jsr SwitchPage
             jmp MainLoop
 SysexFail:  ldx #SM_FAIL
             jsr Status
@@ -282,9 +305,94 @@ topspeed:   jmp waitkey
 DecValue:   jsr PrepField       ; Get field value
             bcc id_r
             cmp TRangeL,y
-            beq id_r           ; Already at minimum, so do nothing
+            beq id_r            ; Already at minimum, so do nothing
             dec CURRPRG,x
             jmp id_draw
+
+; Single-Key Edit
+; * Toggles Switches
+; * Edits Name
+; * Advances Others
+EditField:  ldy FIELD_IX        ; Check the field's type for this edit     
+            lda FType,y         ;   behavior.
+            cmp #F_SWITCH       ; If it's a switch, it's going to toggle
+            beq toggle_sw       ;   between set and unset
+            cmp #F_NAME         ; If it's a name, it will be edited
+            beq edit_name       ; ,,
+            lda FNRPN,y         ; Anything else will advance to its max
+            tax                 ;   and then roll back to 0
+            lda FType,y         ;   ,,
+            tay                 ;   ,,
+            lda CURRPRG,x       ;   ,,
+            cmp TRangeH,y       ;   ,,
+            bcc adv_f           ;   ,,
+            lda #$ff            ;   ,,
+            sta CURRPRG,x       ;   ,,
+adv_f:      inc CURRPRG,x       ;   ,,
+            ldy FIELD_IX        ;   ,,
+            jsr DrawField       ;   ,,
+            jmp MainLoop        ;   ,,
+toggle_sw:  lda FNRPN,y         ; Toggle the switch
+            tay                 ; ,,
+            lda CURRPRG,y       ; ,,
+            eor #$01            ; ,,
+            sta CURRPRG,y       ; ,,
+            ldy FIELD_IX        ; ,,
+            jsr DrawField       ; ,,
+            jmp MainLoop        ; ,,
+edit_name:  jsr ClrCursor       ; Clear cursor during name edit
+            jsr FieldLoc        ; Get actual starting position of Name field
+pos_cur:    jsr find_end        ; Set IX to the character after the last one
+            lda #TXTCURSOR      ; Show a cursor in that place
+            sta (FIELD),y       ; ,,
+getkey:     ldx #$40            ; Debounce key, wait for any key to be lifted
+-debounce:  cpx KEY             ; ,,
+            bne debounce        ; ,,
+-wait:      ldy KEY             ; Wait for any key to be pressed
+            cpy #$40            ; ,,
+            beq wait            ; ,,
+            cpy #BACKSP         ; Has backspace been pressed?
+            beq backsp          ; ,,
+            cpy #EDIT           ; Has return been pressed?
+            beq entername       ; ,,
+            lda KEYMAP,y        ; Map keycode to a PETSCII value
+            cmp #" "            ; Constrain values for character
+            bcc getkey          ; ,,
+            cmp #"Z"+1          ; ,,
+            bcs getkey          ; ,,
+            ldy IX              ; Put this character into the NRPN buffer
+            sta CURRPRG+65,y    ; ,,
+            jsr PETtoScr        ; Convert to screen code for display
+            ldy IX              ; ,,
+            sta (FIELD),y       ; ,,
+            cpy #18             ; If at maximum size, do not advance cursor
+            bcc pos_cur         ; ,,
+            inc IX              ; Advance the cursor
+            jmp pos_cur         ; ,,
+backsp:     ldy IX              ; Backspace
+            lda #" "            ; Clear the old cursor
+            sta (FIELD),y       ; ,,
+            beq getkey          ; If at the beginning already, do not backspace
+            dec IX              ; Backspace by moving index back
+            ldy IX              ; ,,
+            lda #0              ; And adding a 0 in the NRPN buffer
+            sta CURRPRG+65,y    ; ,,
+            beq pos_cur
+entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
+            lda #" "            ; ,,
+            sta (FIELD),y       ; ,,
+            lda #0              ; Always make sure that this last name location
+            sta CURRPRG+85      ;   is a 0
+            jsr DrawCursor      ; Replace removed field-level cursor
+            jmp MainLoop        ; And go back to Main
+find_end:   ldy #0              ; Starting NRPN index of Name
+-loop:      lda CURRPRG+65,y    ; Find the end of the current name, where the
+            beq fc_r            ;   cursor should go
+            iny                 ;   ,,
+            cpy #20             ;   ,,
+            bne loop            ;   ,,
+fc_r:       sty IX              ;   ,,
+            rts
 
 ; Send Edit Buffer
 ; From the current program        
@@ -313,7 +421,7 @@ BufferSend: lda #<EditBuffer
 bsend_r:    jmp MainLoop
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; SUBROUTINES
+; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Prepare Field
 ; for increment or decrement
@@ -359,7 +467,7 @@ PopFields:  ldx PAGE            ; Get top parameter number for this page
             ; Fall through to DrawCursor
 
 ; Draw Cursor
-; At field index in A
+; At field index in FIELD_IX
 DrawCursor: ldy FIELD_IX 
             lda FRow,y
             jsr FieldRow
@@ -510,13 +618,13 @@ pi:         lda #$5E
             
 ; Clear Screen
 ; And color appropriately
-ClrScr:     ldx #248            ; Clear the entire screen, except for the
+ClrScr:     ldx #242            ; Clear the entire screen, except for the
 -loop:      lda #$20            ;   bottom row, which is used for MIDI status
             sta SCREEN,x        ;   ,,
-            sta SCREEN+248,x    ;   ,,
+            sta SCREEN+241,x    ;   ,,
             lda #PARCOL         ;   ,, (for parameters)
             sta COLOR,x         ;   ,,
-            sta COLOR+242,x     ;   ,,
+            sta COLOR+241,x     ;   ,,
             dex                 ;   ,,
             cpx #$ff            ;   ,,
             bne loop            ;   ,,
@@ -543,6 +651,76 @@ nc_cl:      dey                 ; ,,
             bpl loop            ; ,,
             jmp HOME
             
+; Display Status Message
+; in X            
+Status:     pha
+            lda #<STATUSDISP
+            sta FIELD
+            lda #>STATUSDISP
+            sta FIELD+1
+            lda StatusH,x
+            tay 
+            lda StatusL,x
+            jsr WriteText
+            pla
+            rts
+            
+; Show MIDI Monitor
+; Of a byte in A
+; Last three bytes
+Monitor:    ldx SCREEN+501      ; Unrolled loop to show the most recent three
+            stx SCREEN+498      ; MIDI bytes
+            ldx SCREEN+502      ; ,,
+            stx SCREEN+499      ; ,,
+            ldx SCREEN+504      ; ,,
+            stx SCREEN+501      ; ,,
+            ldx SCREEN+505      ; ,,
+            stx SCREEN+502      ; ,,
+            pha                 ; Show the high nybble onscreen as hex
+            lsr                 ; ,,
+            lsr                 ; ,,
+            lsr                 ; ,,
+            lsr                 ; ,,
+            jsr hexb            ; ,,
+            sta SCREEN+504      ; ,,
+            pla                 ; Show the low nybble onscreen as hex
+            pha                 ; ,,
+            and #$0f            ; ,,
+            jsr hexb            ; ,,
+            sta SCREEN+505      ; ,,
+            pla                 ; ,,
+            rts
+hexb:       cmp #$0a 
+            bcs hexl 
+            ora #$30
+            rts
+hexl:       sbc #$09
+            rts
+            
+; Get Program Location
+; For display. Sets 3 PRGLOC locations with group, bank, and program numbers
+ProgLoc:    lda INSYSEX+4       ; Get bank number
+            clc                 ;   Add #$31 to make it a screen code numeral
+            adc #$31            ;   ,,
+            sta PRGLOC          ;   Set it to first digit
+            lda INSYSEX+5       ; Get group/program number
+            pha
+            and #$07            ; Isolate the program number
+            clc                 ;   Add #$31 to make it a screen code numeral
+            adc #$31            ;   ,,
+            sta PRGLOC+2        ;   Set it to third digit
+            pla
+            lsr                 ; Isolate the group number
+            lsr                 ;   ,,
+            lsr                 ;   ,,
+            clc                 ;   Add #$31 to make it a screen code numeral
+            adc #$31            ;   ,,
+            sta PRGLOC+1        ;   Set it to second digit
+            rts
+           
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; I/O AND DATA SUBROUTINES
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Construct Sysex Message
 ; from A=high/Y=low to OUTSYSEX
 ; PTR points to the next byte in the sysex output stage
@@ -580,19 +758,19 @@ send_err:   ldx #SM_FAIL
             rts
 send_r:     clc
             rts
-
-; Display Status Message
-; in X            
-Status:     pha
-            lda #<(SCREEN+484)
-            sta FIELD
-            lda #>(SCREEN+484)
-            sta FIELD+1
-            lda StatusH,x
-            tay 
-            lda StatusL,x
-            jsr WriteText
-            pla
+            
+; Move In Stage to Library
+; Library index in X (0-39)
+MoveToLib:  lda LibraryL,x      ; Set pointer to library start
+            sta PTR             ; ,,  
+            lda LibraryH,x      ; ,,
+            sta PTR+1           ; ,,
+            ldy #$9f            ; Move 160 bytes from the sysex input buffer
+-loop:      lda INSYSEX,y       ;   into the library entry
+            sta (PTR),y         ;   ,,
+            dey                 ;   ,,
+            cpy #$ff            ;   ,,
+            bne loop            ;   ,,
             rts
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -629,48 +807,9 @@ sydone:     clc                 ;   ,,
             ror READY           ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
 
-
-; Show MIDI Monitor
-; Of a byte in A
-; Last three bytes
-Monitor:    ldx SCREEN+501      ; Unrolled loop to show the most recent three
-            stx SCREEN+498      ; MIDI bytes
-            ldx SCREEN+502      ; ,,
-            stx SCREEN+499      ; ,,
-            ldx SCREEN+504      ; ,,
-            stx SCREEN+501      ; ,,
-            ldx SCREEN+505      ; ,,
-            stx SCREEN+502      ; ,,
-            pha                 ; Show the high nybble onscreen as hex
-            lsr                 ; ,,
-            lsr                 ; ,,
-            lsr                 ; ,,
-            lsr                 ; ,,
-            jsr hexb            ; ,,
-            sta SCREEN+504      ; ,,
-            pla                 ; Show the low nybble onscreen as hex
-            pha                 ; ,,
-            and #$0f            ; ,,
-            jsr hexb            ; ,,
-            sta SCREEN+505      ; ,,
-            pla                 ; ,,
-            rts
-hexb:       cmp #$0a 
-            bcs hexl 
-            ora #$30
-            rts
-hexl:       sbc #$09
-            rts     
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA FIELDS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Unimplemented Field
-Un:         ldy #0
-            lda #"-"
-            sta (FIELD),y
-            rts
-            
 ; Value Bar
 ; at FIELD position, with value in A
 ValBar:     and #$7f            ; Constrain A to 0-127
@@ -800,15 +939,17 @@ haveoct:    pha                 ; Save the note number for later lookup
             dey                 ;   ,,
             sta (FIELD),y       ;   ,,
             rts
-            
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA TABLES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Status messages
 Failed:     .asc "FAILED!     ",0
-Received:   .asc "RECEIVED OK ",0
+Received:   .asc "RECEIVED 000",0
 Sent:       .asc "SENT OK     ",0
 Welcome:    .asc "ED PROPHET 5",0
+NRPNOn:     .asc "NRPN ON     ",0
+NRPNOff:    .asc "NRPN OFF    ",0
 StatusL:    .byte <Failed,<Received,<Sent,<Welcome
 StatusH:    .byte >Failed,>Received,>Sent,>Welcome
 
@@ -824,17 +965,17 @@ EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3
 TopParamIX: .byte 0,      16,     29,     45
 
 ; Key command subtroutine addresses
-KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,0
+KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,EDIT,0
 CommandL:   .byte <PageSel-1,<PageSel-1,<PageSel-1,<PageSel-1
             .byte <PrevField-1,<NextField-1,<IncValue-1,<DecValue-1
-            .byte <BufferSend-1
+            .byte <BufferSend-1,<EditField-1
 CommandH:   .byte >PageSel-1,>PageSel-1,>PageSel-1,>PageSel-1
             .byte >PrevField-1,>NextField-1,>IncValue-1,>DecValue-1
-            .byte >BufferSend-1
+            .byte >BufferSend-1,>EditField-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
-; 7=Name, 8=Unison Voice Count, 9=Unison Retrigger, A=Frequency
+; 7=Name, 8=Unison Voice Count, 9=Unison Retrigger, 10=Frequency
 TSubL:      .byte <ValBar-1,<ValBar-1,<Switch-1,<Track-1
             .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
 TSubH:      .byte >ValBar-1,>ValBar-1,>Switch-1,>Track-1
@@ -966,15 +1107,34 @@ Edit3:      .asc CR,"NAME",CR,CR
             .asc RT,"GLIDE RATE",CR
             .asc RT,"VINTAGE",CR
             .asc RT,"WHEEL RANGE",CR
-            .asc RT,"VEL > FILTER",CR
-            .asc RT,TL,TL,TL," > AMP",CR
-            .asc RT,"      AMT",CR
-            .asc RT,"AFT > FILTER",CR
-            .asc RT,TL,TL,TL," > LFO",CR
-            .asc RT,"      AMT",CR
+            .asc RT,"VEL  >FILTER",CR
+            .asc RT,TL,TL,TL,"  >AMP",CR
+            .asc RT,"     AMT",CR
+            .asc RT,"AFT  >FILTER",CR
+            .asc RT,TL,TL,TL,"  >LFO",CR
+            .asc RT,"     AMT",CR
             .asc RT,"RELEASE/HOLD"
-            .asc 00            
-
+            .asc 00 
+            
+Menu:       .asc "   ED FOR PROPHET 5",CR
+            .asc "  ",TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,CR
+            .asc "SETTINGS",CR
+            .asc RT,"NRPN",CR
+            .asc 00
+             
+; Library Sysex Pointers
+; Indexed             
+LibraryL:   .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60            
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60            
+LibraryH:   .byte $20,$20,$21,$21,$22,$23,$23,$24
+            .byte $25,$25,$26,$26,$27,$28,$28,$29
+            .byte $2a,$2a,$2b,$2b,$2c,$2d,$2d,$2e
+            .byte $2f,$2f,$30,$30,$31,$32,$32,$33
+            .byte $34,$34,$35,$35,$36,$37,$37,$38
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBMODULES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;     
