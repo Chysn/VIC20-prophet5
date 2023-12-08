@@ -53,6 +53,8 @@ SEQ_STEPS   = CURPRG+$a3        ; Sequencer Steps
 SEQ_TEMPO   = CURPRG+$a4        ; Sequencer Tempo
 SEED1_PRG   = CURPRG+$a5        ; Generator Seed 1
 SEED2_PRG   = CURPRG+$a6        ; Generator Seed 2
+
+; Application Data Storage
 OUTSYSEX    = $1200             ; Outgoing sysex stage
 CURPRG      = $1300             ; Current program indexed buffer (128 bytes)
 SEED1       = $1400             ; Seed 1 program for generator (128 bytes)
@@ -114,6 +116,7 @@ STACOL      = 2                 ; Status line color (red)
 LIBCOL      = 5                 ; Library display color (green)
 STATUSDISP  = SCREEN+484        ; Status line starting location
 WINDOW_ED   = SCREEN+248        ; Window editor location
+PROGRESSBAR = SCREEN+227        ; Progress bar location
 
 ; Key Constants
 F1          = 39
@@ -194,24 +197,20 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             sta VIC+$0f         ; ,,
             lda #30             ; Text color
             jsr CHROUT          ; ,,
-            lda #<NMISR
-            sta NMINV
-            lda #>NMISR
-            sta NMINV+1    
-            jsr MIDIINIT
+            lda #<NMISR         ; Set NMI for MIDI input listening
+            sta NMINV           ; ,,
+            lda #>NMISR         ; ,,
+            sta NMINV+1         ; ,,
+            jsr MIDIINIT        ; Initialize the MIDI interface
             ldy #0              ; If the first library location is a valid
             jsr Validate        ;   voice dump, unpack it to the
             bne clearprg        ;   current program buffer
             lda PTR             ;   ,,
             ldy PTR+1           ;   ,,
             jsr UnpBuff         ;   ,,
-            jmp startpage       ;   ,,
-clearprg:   ldy #$80            ; If no sysex was in memory, clear out
-            lda #0              ;   the current program memory
--loop:      sta CURPRG,y        ;   ,,
-            dey                 ;   ,,
-            bpl loop            ;   ,,
-startpage:  lda #0              ; Initialize
+            jmp init_data       ;   ,,
+clearprg:   jsr NewLib          ; New library entry if invalid
+init_data:  lda #0              ; Initialize
             sta READY           ;   * Sysex ready flag
             sta LISTEN          ;   * Sysex listen flag
             sta PAGE            ;   * Edit screen number
@@ -232,7 +231,6 @@ startpage:  lda #0              ; Initialize
 no_sysex:   jsr SwitchPage      ; Generate the edit screen
             ldx #SM_WELCOME     ; Show welcome message in status bar
             jsr Status          ; ,,
-            jsr SelLib          ; ,,
             ; Fall through to MainLoop
 
 ; Main Program Loop
@@ -320,11 +318,11 @@ PageSel:    sec
             lsr                 ; ,,
             lsr                 ; ,,
             ldy SHIFT           ; If SHIFT is held down, jump to
-            bne LibSec          ;   ,,
-            cmp PAGE
-            beq read_r          
-            sta PAGE
-            jsr SwitchPage
+            bne LibSec          ;   Library selection
+            cmp PAGE            ; If already on this page, don't redraw
+            beq read_r          ; ,,
+            sta PAGE            ; Set the page and draw it
+            jsr SwitchPage      ; ,,
 read_r:     jmp MainLoop
 
 ; Go to Setup or Help Screen
@@ -340,13 +338,8 @@ GoSetup:    lda #4
 setup_r:    jmp MainLoop
             
 ; Select Library Section
-; The function key code minus 39 happen to be exactly half of
-; where we want to place the library when the SHIFT key is held
-; down.
-LibSec:     asl                 ; Multiply FN key by 16
-            asl                 ; ,,
-            asl                 ; ,,
-            asl                 ; ,,
+LibSec:     tay                 ; Get library division for this key
+            lda LibDiv,y        ; ,,
             sta CURLIB_IX       ; Set current library index
             jmp switchlib       ; And go there
             
@@ -696,9 +689,6 @@ vdump:      jsr Popup           ; Put the dump selection menu
 -wait:      lda KEY             ;   ,,
             cmp #$40            ;   ,,
             beq wait
-            pha                 ;   ,,
-            jsr SwitchPage      ; Redraw the page to get rid of window
-            pla
             cmp #DPROG          ; Dumping this program?
             bne ch_bank         ; ,,
             jmp DumpPrg         ; ,,
@@ -710,7 +700,8 @@ ch_group:   cmp #DGROUP         ; Dumping this program's group?
             jmp DumpGroup       ; ,,
 dump_r:     ldx #SM_BLANK       ; No dump done, clear status
             jsr Status          ; ,,
-dump_r2:    jmp MainLoop
+dump_r2:    jmp SwitchPage      ; Get rid of window
+            jmp MainLoop
 
 ; Erase the current program      
 Erase:      lda PAGE            ; Erase only works on edit screens
@@ -730,7 +721,7 @@ Erase:      lda PAGE            ; Erase only works on edit screens
             bne erase_r
             ldy CURLIB_IX
             jsr SetLibPtr
-            jsr ClearLib
+            jsr NewLib
 erase_r:    jsr SwitchPage
             ldx #SM_BLANK
             jsr Status
@@ -1078,6 +1069,18 @@ unset:      lda #"-"
             sta PRGLOC+2
             rts
             
+; Configure Progress Bar
+; within a popup       
+; Once set up
+;   LDA value
+;   JSR ProgPopup
+ProgPopup:  ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
+            stx FIELD           ;   VarBar
+            ldx #>PROGRESSBAR   ;   ,,
+            stx FIELD+1         ;   ,
+            jsr ValBar
+            rts
+            
 ; Draw Popup Window
 Popup:      jsr HOME
             lda #<Window
@@ -1117,13 +1120,15 @@ DumpPrg:    ldy CURLIB_IX
             sty IX              ; Store in temporary index for status message
             jsr SetLibPtr
             jsr DumpLib
+            jsr SwitchPage
             jmp MainLoop
 
 ; Dump Bank
 ; Find all members of the current program's bank and dump them            
-DumpBank:   ldy CURLIB_IX
-            jsr SetLibPtr
-            ldy #5              ; Get the current program's bank
+DumpBank:   jsr Popup           ; Set up progress bar popup
+            ldy CURLIB_IX       ; Get the current program's bank number
+            jsr SetLibPtr       ;   ,,
+            ldy #5              ;   ,,
             lda (PTR),y         ;   and set it as the bank mask
             and #$f8            ;   ,,
             sta MASK            ;   ,,
@@ -1141,14 +1146,19 @@ DumpBank:   ldy CURLIB_IX
             bne db_nomatch      ; ,,
             jsr DumpLib         ; If it does, dump the library entry
 db_nomatch: inc IX              ; Move to the next library entry
+            lda IX              ; Draw the value bar based on index
+            asl                 ;   ,, (twice the index, actually)
+            jsr ProgPopup       ;   ,,
             ldy IX              ; Check the search index for the end
             cpy #LIB_TOP        ; ,,
             bne loop
+            jsr SwitchPage
             jmp MainLoop
 
 ; Dump Group
 ; Find all members of the current program's group and dump them
-DumpGroup:  ldy CURLIB_IX
+DumpGroup:  jsr Popup
+            ldy CURLIB_IX
             jsr SetLibPtr
             ldy #4              ; Get the current program's group
             lda (PTR),y         ;   and set it as the group mask
@@ -1163,9 +1173,13 @@ DumpGroup:  ldy CURLIB_IX
             bne dg_nomatch      ; ,,
             jsr DumpLib         ; If it does, dump the library entry
 dg_nomatch: inc IX              ; Move to the next library entry
+            lda IX              ; Draw the value bar based on index
+            asl                 ; ,,
+            jsr ProgPopup       ; ,,
             ldy IX              ; Check the search index for the end 
             cpy #LIB_TOP        ; ,,
             bne loop
+            jsr SwitchPage
             jmp MainLoop
             
 ; Unpack to Buffer
@@ -1271,7 +1285,7 @@ send_r:     clc
 ; Unpack specified library index (in Y) to the current program location
 SelLib:     jsr Validate
             beq lib_good
-            jsr ClearLib
+            jsr NewLib
 lib_good:   lda PTR
             ldy PTR+1
             jmp UnpBuff
@@ -1300,9 +1314,9 @@ Validate:   jsr SetLibPtr
             cmp #ST_ENDSYSEX
 invalid:    rts
 
-; Clear Data
+; New Library Entry
 ; With data pointer already in PTR
-ClearLib:   ldy #$9f
+NewLib:     ldy #$9f
             lda #0
 -loop:      sta (PTR),y
             dey
@@ -1537,6 +1551,9 @@ PrgDump:    .byte $f0, $01, $32, $02, $ff
 ; Value Bar Partials
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 
+; Library Divisions
+LibDiv:     .byte 0,19,39,59
+
 ; Key command subtroutine addresses
 KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
@@ -1762,15 +1779,15 @@ Window:     .asc 5 ; White
             .asc RT,RT,RT,RT,RT
             .asc P_BL,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_BR,CR
             .asc RT,RT,RT,RT,RT,RT,UP,UP,UP,UP ; Position for label
-            .asc 00
+            .asc 30,00
             
-PrgLabel:   .asc "PROGRAM #",30,0
-DumpMenu:   .asc "VOICE DUMP",CR
+PrgLabel:   .asc 5,"PROGRAM #",30,0
+DumpMenu:   .asc 5,"VOICE DUMP",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROG  ",RVON,"B",RVOF,"ANK",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"G",RVOF,"ROUP E",RVON,"X",RVOF,"IT"
             .asc 30,0
             
-EraseConf:  .asc "ERASE:",CR
+EraseConf:  .asc 5,"ERASE:",CR
             .asc RT,RT,RT,RT,RT,RT,"ARE YOU",CR
             .asc RT,RT,RT,RT,RT,RT,"SURE?(Y/N)",30,0
             
