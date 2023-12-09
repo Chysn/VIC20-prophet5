@@ -32,12 +32,14 @@ Vectors:    .word Start         ; Start
 FIELD       = $00               ; Pointer to field memory location (2 bytes)
 SYIN        = $02               ; Sysex In pointer (2 bytes)
 SYIN_IX     = $04               ; Sysex In position index
-PTR         = $05               ; General use pointer (2 bytes)
+PTR         = $05               ; Library pointer (2 bytes)
+PTRD        = $07               ; Destination pointer (2 bytes)
+
 READY       = $033c             ; New sysex is ready
 PAGE        = $033d             ; Current page number
 FIELD_IX    = $033e             ; Current field index
 LISTEN      = $033f             ; Sysex listen flag
-TOGGLE      = $0340             ; General use toggle value
+N_LISTEN    = $0340             ; Note listen flag
 REPEAT      = $0341             ; Repeat speed
 KEYBUFF     = $0342             ; Last key pressed
 IX          = $0343             ; General use index
@@ -45,7 +47,16 @@ PRGLOC      = $0344             ; Program location screen codes (3 bytes)
 TGTLIB_IX   = $0347             ; Target library index
 CURLIB_IX   = $0348             ; Current in-use library index
 P_RAND      = $0349             ; Random number seed (2 bytes)
-MASK        = $034b             ; Program mask for dump
+S_GROUP     = $034b             ; Group search
+S_BANK      = $034c             ; Bank search
+DUMPTYPE    = $034d             ; Bit 7 set = Group, clear = Bank
+DEST10      = $034e             ; Tens digit of copy destination
+DEST1       = $034f             ; Ones digit of copy destination
+SEQ_XPORT   = $0350             ; Sequence transport (bit0=rec, 7=play, 0=stop)
+SEQ_PLAY_IX = $0351             ; Sequence play note index
+SEQ_REC_IX  = $0352             ; Sequence record index
+SEQ_COUNT   = $0353             ; Sequence note countdown
+
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
 NRPN_TX     = CURPRG+$a1        ; NRPN Transmit toggle
 DEVICE_NUM  = CURPRG+$a2        ; Storage Device number
@@ -80,6 +91,7 @@ SM_LIB      = 3
 SM_WELCOME  = 4
 SM_GEN      = 5
 SM_BLANK    = 6
+SM_COPIED   = 7
 
 ; Character Constants
 CR          = $0d               ; Carriage return PETSCII
@@ -100,7 +112,7 @@ P_T         = 195               ;                top
 P_B         = 198               ;                bottom
 P_TR        = 201               ;                top right
 P_L         = 194               ;                left
-P_R         = 200               ;                rifght
+P_R         = 200               ;                right
 P_BL        = 202               ;                bottom left
 P_BR        = 203               ;                bottom right
 UP          = 145               ; Cursor up
@@ -114,6 +126,7 @@ PARCOL      = 3                 ; Parameter color (cyan)
 SELCOL      = 7                 ; Selected field color (yellow)
 STACOL      = 2                 ; Status line color (red)
 LIBCOL      = 5                 ; Library display color (green)
+SEQCOL      = 1                 ; Sequencer transport color (white)
 STATUSDISP  = SCREEN+484        ; Status line starting location
 WINDOW_ED   = SCREEN+248        ; Window editor location
 PROGRESSBAR = SCREEN+227        ; Progress bar location
@@ -132,18 +145,17 @@ EDIT        = 15                ; Edit parameter
 BACKSP      = 7                 ; Backspace
 NEXTLIB     = 5                 ; +
 PREVLIB     = 61                ; -
-OPENSETUP   = 8                 ; Back arrow
+OPENSETUP   = 32                ; Space
+CANCEL      = 8                 ; Back arrow
 OPENHELP    = 43                ; H
 GENERATE    = 19                ; G
 SAVE        = 41                ; S
 LOAD        = 21                ; L
 SETPRG      = 13                ; P
-CLEAR       = 62                ; CLR (+Commodore)
+CLEAR       = 62                ; CLR
 VOICEDUMP   = 18                ; D
-DPROG       = 13                ; P
-DBANK       = 35                ; B 
-DGROUP      = 19                ; G
-YES         = 11                ; Y
+COPY        = 34                ; C
+RUN         = 24                ; RUN/STOP
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -176,7 +188,6 @@ RFI         = $ff56             ; Return from interrupt
 KEY         = $c5               ; Pressed key
 HOME        = $e581             ; Home cursor
 CLSR        = $e55f             ; Clear screen
-KEYMAP      = $ec5e             ; Key to character map
 SHIFT       = $028d             ; SHIFT key status
 VIAT        = $9114             ; VIA Timer (2 bytes)
 
@@ -197,6 +208,12 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             sta VIC+$0f         ; ,,
             lda #30             ; Text color
             jsr CHROUT          ; ,,
+            sei                 ; Set IRQ for sequencer playback
+            lda #<IRQSR
+            sta CINV
+            lda #>IRQSR
+            sta CINV+1
+            cli            
             lda #<NMISR         ; Set NMI for MIDI input listening
             sta NMINV           ; ,,
             lda #>NMISR         ; ,,
@@ -213,10 +230,14 @@ clearprg:   jsr NewLib          ; New library entry if invalid
 init_data:  lda #0              ; Initialize
             sta READY           ;   * Sysex ready flag
             sta LISTEN          ;   * Sysex listen flag
+            sta N_LISTEN        ;   * Note listen flag
             sta PAGE            ;   * Edit screen number
             sta NRPN_TX         ;   * NRPN Transmit
             sta TGTLIB_IX       ;   * Target library entry index
             sta CURLIB_IX       ;   * Current library entry index
+            sta SEQ_XPORT       ;   * Sequencer transport
+            sta SEQ_PLAY_IX     ;   * Sequencer play index
+            sta SEQ_REC_IX      ;   * Sequencer record index
             lda #1              ;   * MIDI channel
             sta MIDI_CH         ;     ,,
             sta SEED1_PRG       ;   * Generator seed 1
@@ -230,23 +251,27 @@ init_data:  lda #0              ; Initialize
             sta SEQ_TEMPO       ;     ,,
 no_sysex:   jsr SwitchPage      ; Generate the edit screen
             ldx #SM_WELCOME     ; Show welcome message in status bar
+            lda #$a2            ; Set IRQ to 240 per second
+            sta $9124           ; ,,
+            lda #$10            ; ,,
+            sta $9125           ; ,,
             jsr Status          ; ,,
             ; Fall through to MainLoop
 
 ; Main Program Loop
 ; Wait for a key, then act on valid commands            
-MainLoop:   lda KEY             ; Debounce the key press
-            cmp #$40            ; ,,
-            bne MainLoop        ; ,,
+MainLoop:   lda #$40            ; Debounce the key press
+-debounce:  cmp KEY             ; ,,
+            bne debounce        ; ,,
 waitkey:    bit READY           ; If Sysex is ready, handle it
             bmi SysexReady      ; ,,
             lda KEY             ; Get key press
-            sta KEYBUFF
+            sta KEYBUFF         ; Store pressed key to avoid race conditions
             cmp #$40            ; If no key down, wait
             bne keydown         ; ,,
             ldx #$40            ; Reset key repeat rate
             stx REPEAT          ; ,,
-            jmp waitkey
+            bne waitkey
 keydown:    tay                 ; Preserve key pressed
             ldx #0              ; Look through Key Code table for a valid
 -loop:      lda KeyCode,x       ;   command key press
@@ -376,7 +401,8 @@ IncValue:   jsr PrepField       ; Get field value
             cmp TRangeH,y
             beq id_r            ; Already at maximum, so do nothing
             inc CURPRG,x
-id_draw:    ldy FIELD_IX
+nrpn_msg:   jsr NRPNOut         ; Send NRPN message, if specified
+            ldy FIELD_IX
             jsr DrawField
             ldy FIELD_IX
             lda FType,y         ; Some field types should not debounce the
@@ -409,7 +435,7 @@ DecValue:   jsr PrepField       ; Get field value
             cmp TRangeL,y
             beq id_r            ; Already at minimum, so do nothing
             dec CURPRG,x
-            jmp id_draw
+            jmp nrpn_msg
 
 ; Single-Key Edit
 ; * Toggles Switches
@@ -438,17 +464,11 @@ edit_name:  jsr ClrCursor       ; Clear cursor during name edit
 pos_cur:    jsr find_end        ; Set IX to the character after the last one
             lda #TXTCURSOR      ; Show a cursor in that place
             sta (FIELD),y       ; ,,
-getkey:     ldx #$40            ; Debounce key, wait for any key to be lifted
--debounce:  cpx KEY             ; ,,
-            bne debounce        ; ,,
--wait:      ldy KEY             ; Wait for any key to be pressed
-            cpy #$40            ; ,,
-            beq wait            ; ,,
+getkey:     jsr Keypress        ; Get key code in Y, PETSCII in A
             cpy #BACKSP         ; Has backspace been pressed?
             beq backsp          ; ,,
             cpy #EDIT           ; Has return been pressed?
             beq entername       ; ,,
-            lda KEYMAP,y        ; Map keycode to a PETSCII value
             cmp #" "            ; Constrain values for character
             bcc getkey          ; ,,
             cmp #"Z"+1          ; ,,
@@ -589,17 +609,14 @@ SetPrg:     lda PAGE            ; Set Program only works on edit screens
             sta WINDOW_ED,y     ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
-pgetkey:    ldx #$40            ; Debounce key, wait for any key to be lifted
--debounce:  cpx KEY             ; ,,
-            bne debounce        ; ,,
--wait:      ldy KEY             ; Wait for any key to be pressed
-            cpy #$40            ; ,,
-            beq wait            ; ,,
-            cpy #BACKSP         ; Has backspace been pressed?
+pgetkey:    jsr Keypress        ; Keycode in Y, PETSCII in A
+            cpy #CANCEL         ; Cancel
+            bne pch_bk          ; ,,
+            jmp pn_inval        ; ,,
+pch_bk:     cpy #BACKSP         ; Has backspace been pressed?
             beq pbacksp          ; ,,
             cpy #EDIT           ; Has return been pressed?
             beq pdone           ; ,,
-            lda KEYMAP,y        ; Map keycode to a PETSCII value
             cmp #"1"            ; Constrain values for character
             bcc pgetkey         ; ,,
             ldy IX              ; If the current index is 2 (the third number)
@@ -683,25 +700,22 @@ vdump:      jsr Popup           ; Put the dump selection menu
             lda #<DumpMenu      ;   into a popup window
             ldy #>DumpMenu      ;   ,,
             jsr PRSTR           ;   ,,
-            lda #$40            ; Debounce the key, then wait for a key
--debounce:  cmp KEY             ;   to be pressed
-            bne debounce        ;   ,,
--wait:      lda KEY             ;   ,,
-            cmp #$40            ;   ,,
-            beq wait
-            cmp #DPROG          ; Dumping this program?
+vgetkey:    jsr Keypress        ; Get pressed key
+            cpy #CANCEL         ; Check for cancel key
+            beq dump_r          ; ,,
+            cmp #"P"            ; Dumping this program?
             bne ch_bank         ; ,,
             jmp DumpPrg         ; ,,
-ch_bank:    cmp #DBANK          ; Dumping this program's bank?
+ch_bank:    cmp #"B"            ; Dumping this program's bank?
             bne ch_group        ; ,,
             jmp DumpBank        ; ,,
-ch_group:   cmp #DGROUP         ; Dumping this program's group?
-            bne dump_r          ; ,,
+ch_group:   cmp #"G"            ; Dumping this program's group?
+            bne vgetkey         ; ,,
             jmp DumpGroup       ; ,,
 dump_r:     ldx #SM_BLANK       ; No dump done, clear status
             jsr Status          ; ,,
-dump_r2:    jmp SwitchPage      ; Get rid of window
-            jmp MainLoop
+            jsr SwitchPage      ; Get rid of window
+dump_r2:    jmp MainLoop
 
 ; Erase the current program      
 Erase:      lda PAGE            ; Erase only works on edit screens
@@ -711,13 +725,8 @@ Erase:      lda PAGE            ; Erase only works on edit screens
             lda #<EraseConf
             ldy #>EraseConf
             jsr PRSTR
-            lda #$40
--debounce:  cmp KEY
-            bne debounce
--wait:      lda KEY
-            cmp #$40
-            beq wait
-            cmp #YES
+            jsr Keypress
+            cmp #"Y"
             bne erase_r
             ldy CURLIB_IX
             jsr SetLibPtr
@@ -726,7 +735,133 @@ erase_r:    jsr SwitchPage
             ldx #SM_BLANK
             jsr Status
 erase_r2:   jmp MainLoop
-                                           
+
+; Copy the current program
+; to another location
+CopyLib:    lda PAGE            ; Copy only works on edit screens
+            cmp #4              ; ,,
+            bcs erase_r2        ; Go to above MainLoop jump
+cpage_ok:   jsr Popup
+            lda #<CopyLabel
+            ldy #>CopyLabel
+            jsr PRSTR
+            ldy #0              ; Set up editor for library number entry
+            sty IX              ; ,, Set current cursor position
+cpos_cur:   lda #TXTCURSOR      ; ,, Add cursor at beginning
+            sta WINDOW_ED,y     ; ,,
+cgetkey:    jsr Keypress        ; Get key
+            cpy #CANCEL         ; Cancel
+            bne cch_bk          ; ,,
+            jmp copy_r
+cch_bk:     cpy #BACKSP         ; Backspace
+            beq cbacksp         ; ,,
+            cpy #EDIT           ; Return
+            beq cdone           ; ,,
+            cmp #"0"            ; Test for valid tens-place numerals (1-6)
+            bcc cgetkey         ; ,,
+            ldy IX              ; If the index is past the first location (0)
+            bne ones            ;   then it's the ones place
+            cmp #"6"+1          ;   ,, The tens place allows 0-6
+            bcs cgetkey         ;   ,,
+            sta DEST10          ; If it's a valid numeral, add it to the string
+            sta WINDOW_ED,y     ;   and to the display
+            inc IX              ; Increment the index and redraw the cursor
+            ldy IX              ; ,,
+            jmp cpos_cur        ; ,,
+ones:       ldx "9"+1           ; By default, maximum is 9
+            stx DEST1           ;   Use DEST1 to temporarily store the maximum
+            ldx DEST10          ;   ,,
+            cpx #"6"            ;   ,, If tens is 6, change max to 4
+            bne allow9          ;   ,,
+            ldx #"4"+1          ;   ,,
+            stx DEST1           ;   ,,
+allow9:     cmp DEST1           ; Test against the determined maximum
+            bcs cgetkey         ; ,,
+            ldx IX              ; Do not advance past two digits
+            cpx #2              ; ,,
+            bcs cgetkey         ; ,,
+            sta DEST1           ; Save in ones place location
+            sta WINDOW_ED,y     ; Display in the popup
+            inc IX              ; Advance the index and redraw
+            ldy IX
+            jmp cpos_cur        ;   the cursor
+cbacksp:    ldy IX              ; Move back and clear the destination byte
+            beq cgetkey         ; ,,
+            lda #" "            ; ,,
+            sta WINDOW_ED,y     ; ,,
+            sta DEST10,y        ; ,,
+            dec IX              ; ,,
+            ldy IX
+            jmp cpos_cur        ; ,,
+cdone:      ldx IX              ; If the number isn't finished, go back for
+            cpx #2              ;   more
+            bne cgetkey         ;   ,,
+            lda DEST10          ; Get the tens place
+            asl                 ; Shift out everything but the numeral
+            asl                 ; ,,
+            asl                 ; ,,
+            asl                 ; ,,
+            sta IX              ; Tens place is in high nybble
+            lda DEST1           ; Get ones place and remove the #$3x
+            and #$0f            ; ,,
+            ora IX              ; Set the high nybble of A to tens place
+            ldy #0              ; And then use decimal mode to subtract
+            sed                 ;   one, and count how many times it's done
+-loop:      iny                 ;   which leaves the actual value in Y
+            sec                 ;   ,,
+            sbc #1              ;   ,,
+            bne loop            ;   ,,
+            cld                 ;   ,,
+            dey                 ; Re-zero-index the library entry number
+            jsr SetLibPtr       ; Set PTR to this library entry
+            lda PTR             ; Move PTR to the destination pointer for
+            sta PTRD            ;   copying
+            lda PTR+1           ;   ,,
+            sta PTRD+1          ;   ,,
+            ldy CURLIB_IX       ; Now set PTR to the current entry
+            jsr SetLibPtr       ; ,,
+            ldy #$9f            ; Perform the copy operation
+-loop:      lda (PTR),y         ; ,,
+            sta (PTRD),y        ; ,,
+            dey                 ; ,,
+            cpy #$ff            ; ,,
+            bne loop            ; ,,
+            lda #$80            ; Set the copy's program number as unset
+            ldy #4              ; ,,
+            sta (PTRD),y        ; ,,
+            ldx #SM_COPIED      ; Indicate copy success
+            jsr Status          ; ,,
+copy_r:     jsr SwitchPage
+            jmp MainLoop
+
+; Sequencer control
+Sequencer:  lda SHIFT           ; Is Commodore key held down?
+            and #$02            ; ,,
+            beq startstop       ; If not, start/stop the transport
+            lda SEQ_XPORT       ; Toggle the record transport bit
+            eor #$01            ; ,,
+            and #$01            ; and turn off the play transport
+            sta SEQ_XPORT       ; ,,
+            ldx #0              ; Reset the record index
+            stx SEQ_REC_IX      ; ,,
+            jmp annunciate
+startstop:  lda SEQ_XPORT       ; Toggle the playback transport 
+            eor #$02            ; ,,
+            and #$02            ; and turn off the record transport
+            sta SEQ_XPORT       ; ,,
+            ldx #$ff            ; Reset the play index
+            stx SEQ_PLAY_IX     ; ,,
+            inx                 ; Set count to 1 so play starts right away
+            stx SEQ_COUNT       ; ,,
+            lda MIDI_CH         ; Set MIDI channel
+            sec                 ; ,,
+            sbc #1              ; ,,
+            jsr SETCH           ; ,,
+annunciate: ldx SEQ_XPORT       ; Get the sequencer transport graphic
+            lda XportAnn,x      ;   from the annunicator table and
+            sta SCREEN+21       ;   put it in the top right corner of
+            jmp MainLoop        ;   the screen
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -956,6 +1091,8 @@ nc_cl:      dey                 ; ,,
             sta COLOR+485       ; ,,
             sta COLOR+462       ; ,,
             sta COLOR+463       ; ,,
+            lda #SEQCOL         ; Add sequence transport color
+            sta COLOR+21        ; ,,
             jmp HOME
             
 ; Display Status Message
@@ -1087,32 +1224,31 @@ Popup:      jsr HOME
             ldy #>Window
             jsr PRSTR
             rts
+            
+; Get Key Press
+; Return PETSCII value of key in A 
+; and key code in Y
+Keypress:   lda #$40            ; Debounce keyboard by waiting for keys to be
+-debounce:  cmp KEY             ;   released
+            bne debounce        ;   ,,
+-wait:      ldy KEY             ; Wait for a keypress
+            cpy #$40            ; ,,
+            beq wait            ; ,,
+            lda SHIFT           ; Get shift state
+            and #$01            ; ,,
+            beq unshift         ; Get location in ROM of keyboard map
+            lda #$9f            ; ,,
+            .byte $3c           ; Skip word (SKW)
+unshift:    lda #$5e            ; ,,
+            sta $f5             ; ,,
+            lda #$ec            ; ,, high byte of key map in ROM
+            sta $f6             ; ,,
+            lda ($f5),y         ; Get PETSCII from table
+            rts
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; I/O AND DATA SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Dump a Library Entry
-; Set PTR before the call with SetLibPtr or Validate            
-DumpLib:    ldy #0
--loop:      lda (PTR),y
-            jsr Monitor
-            jsr MIDIOUT
-            bcs dump_err
-            cmp #ST_ENDSYSEX
-            beq dump_ok
-            iny
-            bne loop
-dump_err:   ldx #SM_FAIL
-            jmp Status
-dump_ok:    ldx #SM_SENT
-            jsr Status
-            ldy IX
-            iny
-            jsr TwoDigNum
-            stx STATUSDISP+7
-            sta STATUSDISP+8
-            rts
-            
 ; Dump Single Program
 ; At the current library
 ; To dump another library, set PTR and call the DumpLib endpoint instead
@@ -1123,29 +1259,40 @@ DumpPrg:    ldy CURLIB_IX
             jsr SwitchPage
             jmp MainLoop
 
-; Dump Bank
-; Find all members of the current program's bank and dump them            
-DumpBank:   jsr Popup           ; Set up progress bar popup
+; Dump Bank or Group
+; Find all members of the current program's bank and/or group and dump them     
+DumpGroup:  sec                 ; Set DUMPTYPE flag to indicate group dump
+            .byte $34           ; Skip byte (SKB)
+DumpBank:   clc                 ; Clear DUMPTYPE flag to indicate bank dump
+            ror DUMPTYPE        ; ,,
+            jsr Popup           ; Set up progress bar popup
             ldy CURLIB_IX       ; Get the current program's bank number
             jsr SetLibPtr       ;   ,,
-            ldy #5              ;   ,,
-            lda (PTR),y         ;   and set it as the bank mask
-            and #$f8            ;   ,,
-            sta MASK            ;   ,,
+            ldy #4              ;   Get the group
+            lda (PTR),y         ;   ,,
+            sta S_GROUP         ;   and set it as the search group
+            iny                 ;   Get the bank
+            lda (PTR),y         ;   ,,
+            and #$f8            ;   ,, (isolate the bank bits)
+            sta S_BANK          ;   and set it as the search bank
             ldy #0              ; IX is going to be the index of the search
             sty IX              ; ,,
 -loop:      jsr Validate        ; Set the pointer to this library entry
-            bne db_nomatch      ; ,,
+            bne d_nomatch       ; ,,
             ldy #4              ; If the group number is $80, it means there's
             lda (PTR),y         ;   no program number set
-            bmi db_nomatch      ;   ,,
+            bmi d_nomatch       ;   ,,
+            cmp S_GROUP         ; A program must match the group, always, to be
+            bne d_nomatch       ;   dumped
+            bit DUMPTYPE        ; If the DUMPTYPE flag is set, only look at
+            bmi d_match         ;   the group. Otherwise, match the bank too
             iny                 ; Get the bank number of this program
             lda (PTR),y         ; ,,
             and #$f8            ; ,,
-            cmp MASK            ; Does it match the mask?
-            bne db_nomatch      ; ,,
-            jsr DumpLib         ; If it does, dump the library entry
-db_nomatch: inc IX              ; Move to the next library entry
+            cmp S_BANK          ; Does it match the bank?
+            bne d_nomatch       ; ,,
+d_match:    jsr DumpLib         ; If it does, dump the library entry
+d_nomatch:  inc IX              ; Move to the next library entry
             lda IX              ; Draw the value bar based on index
             asl                 ;   ,, (twice the index, actually)
             jsr ProgPopup       ;   ,,
@@ -1154,33 +1301,28 @@ db_nomatch: inc IX              ; Move to the next library entry
             bne loop
             jsr SwitchPage
             jmp MainLoop
-
-; Dump Group
-; Find all members of the current program's group and dump them
-DumpGroup:  jsr Popup
-            ldy CURLIB_IX
-            jsr SetLibPtr
-            ldy #4              ; Get the current program's group
-            lda (PTR),y         ;   and set it as the group mask
-            sta MASK            ;   ,,
-            ldy #0              ; IX is going to be the index of the search
-            sty IX              ; ,,
--loop:      jsr Validate        ; Set the pointer to this library entry
-            bne dg_nomatch      ; ,,
-            ldy #4              ; Get the group number of this program
-            lda (PTR),y         ; ,,
-            cmp MASK            ; Does it match the mask?
-            bne dg_nomatch      ; ,,
-            jsr DumpLib         ; If it does, dump the library entry
-dg_nomatch: inc IX              ; Move to the next library entry
-            lda IX              ; Draw the value bar based on index
-            asl                 ; ,,
-            jsr ProgPopup       ; ,,
-            ldy IX              ; Check the search index for the end 
-            cpy #LIB_TOP        ; ,,
-            bne loop
-            jsr SwitchPage
-            jmp MainLoop
+            
+; Dump a Library Entry
+; Set PTR before the call with SetLibPtr or Validate            
+DumpLib:    ldy #0              ; Set the output index
+-loop:      lda (PTR),y         ; Get the next byte to output
+            jsr Monitor         ; Send it to the MIDI Monitor display
+            jsr MIDIOUT         ; Send it to the Beige Maze MIDI KERNAL
+            bcs dump_err        ; Show error if timeout
+            cmp #ST_ENDSYSEX    ; Was this an end-of-sysex status?
+            beq dump_ok         ; If so, dump is done with success
+            iny                 ; Go to the next index
+            bne loop            ; If we get all the way to 0, something's wrong
+dump_err:   ldx #SM_FAIL        ; Fail by either (1) timing out at the
+            jmp Status          ;   interface, or (2) invalid sysex
+dump_ok:    ldx #SM_SENT        ; Success!
+            jsr Status          ; Show the status and the library entry
+            ldy IX              ;   number
+            iny                 ;   ,, (which is 1-indexed)
+            jsr TwoDigNum       ;   ,,
+            stx STATUSDISP+7    ;   ,,
+            sta STATUSDISP+8    ;   ,,
+            rts
             
 ; Unpack to Buffer
 ; A = low byte / Y = high byte of $9f-byte sysex message ($f0 - $f7)
@@ -1345,11 +1487,77 @@ PRand:      lsr P_RAND
             lda P_RAND+1
             eor #$2b
             sta P_RAND+1
-rnd_r:      rts          
-                     
+rnd_r:      rts  
+
+; Send NRPN, if enabled
+; NRPN index is in X
+NRPNOut:    stx IX
+            lda NRPN_TX
+            beq nrpn_r
+            ldy MIDI_CH         ; Get MIDI channel
+            dey                 ; ,, zero-index it
+            tya                 ; ,,
+            and #$0f            ; Low nybble is MIDI channel
+            ora #%10110000      ; Control Change
+            jsr MIDIOUT         ; ,,
+            lda #%01100011      ; NRPN parameter number MSB CC
+            jsr MIDIOUT         ; ,,
+            lda #%00000000      ; Parameter Number MSB
+            jsr MIDIOUT         ; ,,
+            lda #%01100010      ; NRPN parameter number LSB CC
+            jsr MIDIOUT         ; ,,
+            lda IX              ; Parameter number LSB
+            jsr MIDIOUT         ; ,,
+            lda #%00000110      ; NRPN parameter value MSB CC
+            jsr MIDIOUT         ; ,,
+            lda #%00000000      ; Parameter value MSB
+            jsr MIDIOUT         ; ,,
+            lda #%00100110      ; NRPN parameter value LSB CC
+            jsr MIDIOUT         ; ,,
+            ldx IX              ; Get the NRPN number
+            lda CURPRG,x        ; Get the value
+            and #$7f            ; Constrain for CC
+            jsr MIDIOUT         ; ,,
+nrpn_r:     rts
+
+; Play Next Note
+; And advance sequencer
+PlayNote:   ldy SEQ_PLAY_IX
+            bmi nextnote
+            lda SEQUENCE,y
+            tax 
+            ldy #0
+            jsr NOTEOFF
+            ldy SEQ_PLAY_IX
+            cmp SEQ_STEPS
+            bne nextnote
+            lda #$ff
+            sta SEQ_PLAY_IX
+nextnote:   inc SEQ_PLAY_IX
+            lda SEQUENCE,y
+            sta SCREEN
+            tax 
+            ldy #64
+            jsr NOTEON
+            rts
+               
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; INTERRUPT
+; INTERRUPT HANDLERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; IRQ handles sequencer playback
+IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
+            cmp #$02            ; ,,
+            bne irq_r           ; ,,
+            dec SEQ_COUNT       ; If so, do the countdown
+            bne irq_r           ; If not there yet, return
+            jsr PlayNote        ; Play the next note
+            lda #$ff            ; Reset the countdown
+            sec                 ; ,,
+            sbc SEQ_TEMPO       ; ,,
+            sta SEQ_COUNT       ; ,,
+irq_r:      jmp $eb12           ; Scan keyboard and RTI
+
+
 ; NMI watches for incoming system exclusive data
 NMISR:      pha                 ; NMI does not automatically save registers like
             txa                 ;   IRQ does, so that needs to be done
@@ -1361,6 +1569,9 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             jmp SYSNMI          ; Back to normal NMI, after register saves
 midi:       jsr MIDIIN
             jsr Monitor         ; Show MIDI byte indicator
+            ldy SEQ_XPORT       ; If in note record mode, ignore sysex
+            cpy #$01            ; ,,
+            beq notes           ; ,,
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             sec                 ;   set sysex listen flag
@@ -1390,7 +1601,26 @@ sydone:     clc                 ;   ,,
             beq r_isr           ;   library index
             inc TGTLIB_IX       ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
-
+notes:      bit N_LISTEN        ; Are we waiting for a note?
+            bpl note_on 
+            clc 
+            ror N_LISTEN
+            ldx SEQ_REC_IX 
+            sta SEQUENCE,x
+            cpx #63
+            beq r_isr
+            inc SEQ_REC_IX
+            bne r_isr
+note_on:    sta SYIN_IX         ; Temporary storage of incoming MIDI
+            lda #$90            ; Create a note-on template consisting of
+            clc                 ;   status and MIDI channel
+            adc MIDI_CH         ;   ,,
+            sbc #0              ;   ,, (1 indexed in memory)
+            cmp SYIN_IX         ; Is this equal to the incoming byte?
+            bne r_isr           ; If no, return from interrupt
+            ror N_LISTEN
+            jmp RFI
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA FIELDS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1539,10 +1769,11 @@ ChLib:      .asc "PROG   000",0
 Welcome:    .asc "H FOR HELP",0
 Generated:  .asc "GENERATED ",0
 ClrStatus:  .asc "          ",0
+Copied:     .asc "COPIED    ",0
 StatusL:    .byte <Failed,<Received,<Sent,<ChLib,<Welcome,<Generated
-            .byte <ClrStatus
+            .byte <ClrStatus,<Copied
 StatusH:    .byte >Failed,>Received,>Sent,>ChLib,>Welcome,>Generated
-            .byte >ClrStatus
+            .byte >ClrStatus,>Copied
 
 ; MIDI Messages and Headers
 EditBuffer: .byte $f0, $01, $32, $03, $ff
@@ -1557,17 +1788,17 @@ LibDiv:     .byte 0,19,39,59
 ; Key command subtroutine addresses
 KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
-            .byte VOICEDUMP,CLEAR,0
+            .byte VOICEDUMP,CLEAR,COPY,RUN,0
 CommandL:   .byte <PageSel-1,<PageSel-1,<PageSel-1,<PageSel-1
             .byte <PrevField-1,<NextField-1,<IncValue-1,<DecValue-1
             .byte <BufferSend-1,<EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceDump-1
-            .byte <Erase-1
+            .byte <Erase-1,<CopyLib-1,<Sequencer-1
 CommandH:   .byte >PageSel-1,>PageSel-1,>PageSel-1,>PageSel-1
             .byte >PrevField-1,>NextField-1,>IncValue-1,>DecValue-1
             .byte >BufferSend-1,>EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceDump-1
-            .byte >Erase-1
+            .byte >Erase-1,>CopyLib-1,>Sequencer-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
@@ -1598,6 +1829,10 @@ LAR:        .asc "LAR",0
 ; Commodore-S
 NoteName:   .asc   3,  3,  4,  4,  5,  6,  6,  7,  7,  1,  1,  2
 Accidental: .asc ' ','#',' ','#',' ',' ','#',' ','#',' ','#',' '
+
+
+; Transport Annunciators for Sequencer
+XportAnn:   .asc $20, $51, $3e
 
 ; Initialized Program
 Init:       .asc "INIT",0
@@ -1630,7 +1865,7 @@ FCol:       .byte 1,3,8,14,14,10,3,8,12,14,14,14,10,10,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14  
             .byte 14,14,8,8,8,14,14,3,8,12,14,8,8,8,8,8
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14
-            .byte 14,14,15,14,14,14,14
+            .byte 14,14,14,14,14,14,14
             .byte 1
 
 ; Field type
@@ -1743,7 +1978,7 @@ Setup:      .asc CR,"   ED FOR PROPHET 5",CR
             .asc "SETTINGS",CR
             .asc RT,"MIDI CHANNEL",CR
             .asc RT,"NRPN SEND",CR
-            .asc RT,"DEVICE       #",CR
+            .asc RT,"DEVICE      #",CR
             .asc CR,"SEQUENCER",CR
             .asc RT,"STEPS",CR
             .asc RT,"TEMPO",CR
@@ -1752,15 +1987,16 @@ Setup:      .asc CR,"   ED FOR PROPHET 5",CR
             .asc RT,"SEED",CR
             .asc 00
             
-Help:       .asc CR," ",$5f,"     SETUP",CR
+Help:       .asc CR," SPACE SETUP",CR
             .asc " F1-F7 EDIT SCREEN",CR
             .asc " CRSR  PARAM",CR
             .asc " < >   EDIT VALUE",CR
-            .asc " + -   LIBRARY",CR
+            .asc " - +   LIBRARY",CR
             .asc " B     EDIT BUFFER",CR
             .asc " D     VOICE DUMP",CR
             .asc " G     GENERATE",CR
             .asc " P     SET PROG #",CR
+            .asc " C     COPY",CR
             .asc " S     SAVE",CR
             .asc " L     LOAD",CR
             .asc " RUN   SEQUENCE",CR,CR
@@ -1770,9 +2006,12 @@ Help:       .asc CR," ",$5f,"     SETUP",CR
 
 ; Popup Window            
 Window:     .asc 5 ; White
-            .asc CR,CR,CR,CR,CR,CR,CR,CR
+            .asc CR,CR,CR,CR,CR,CR
             .asc RT,RT,RT,RT,RT
             .asc P_TL,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_TR,CR
+            .asc RT,RT,RT,RT,RT,P_L,$5f,"   CANCEL",P_R,CR
+            .asc RT,RT,RT,RT,RT
+            .asc P_L,30,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,5,P_R,CR
             .asc RT,RT,RT,RT,RT,P_L,"          ",P_R,CR
             .asc RT,RT,RT,RT,RT,P_L,"          ",P_R,CR
             .asc RT,RT,RT,RT,RT,P_L,"          ",P_R,CR
@@ -1783,13 +2022,15 @@ Window:     .asc 5 ; White
             
 PrgLabel:   .asc 5,"PROGRAM #",30,0
 DumpMenu:   .asc 5,"VOICE DUMP",CR
-            .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROG  ",RVON,"B",RVOF,"ANK",CR
-            .asc RT,RT,RT,RT,RT,RT,RVON,"G",RVOF,"ROUP E",RVON,"X",RVOF,"IT"
+            .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROGRAM   ",CR
+            .asc RT,RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
             .asc 30,0
             
 EraseConf:  .asc 5,"ERASE:",CR
             .asc RT,RT,RT,RT,RT,RT,"ARE YOU",CR
             .asc RT,RT,RT,RT,RT,RT,"SURE?(Y/N)",30,0
+
+CopyLabel:  .asc 5,"COPY TO",30,0
             
                          
 ; Library Sysex Pointers
