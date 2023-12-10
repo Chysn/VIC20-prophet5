@@ -52,10 +52,12 @@ S_BANK      = $034c             ; Bank search
 DUMPTYPE    = $034d             ; Bit 7 set = Group, clear = Bank
 DEST10      = $034e             ; Tens digit of copy destination
 DEST1       = $034f             ; Ones digit of copy destination
+
 SEQ_XPORT   = $0350             ; Sequence transport (bit0=rec, 7=play, 0=stop)
 SEQ_PLAY_IX = $0351             ; Sequence play note index
 SEQ_REC_IX  = $0352             ; Sequence record index
 SEQ_COUNT   = $0353             ; Sequence note countdown
+SEQ_LAST    = $0354             ; Sequence last note played
 
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
 NRPN_TX     = CURPRG+$a1        ; NRPN Transmit toggle
@@ -64,13 +66,15 @@ SEQ_STEPS   = CURPRG+$a3        ; Sequencer Steps
 SEQ_TEMPO   = CURPRG+$a4        ; Sequencer Tempo
 SEED1_PRG   = CURPRG+$a5        ; Generator Seed 1
 SEED2_PRG   = CURPRG+$a6        ; Generator Seed 2
+MUTATE      = CURPRG+$a7        ; Mutate flag
 
 ; Application Data Storage
 OUTSYSEX    = $1200             ; Outgoing sysex stage
 CURPRG      = $1300             ; Current program indexed buffer (128 bytes)
 SEED1       = $1400             ; Seed 1 program for generator (128 bytes)
 SEED2       = $1480             ; Seed 2 program for generator (128 bytes)
-SEQUENCE    = $1500             ; Sequence data (up to 64 steps)
+SEQUENCE    = $1500             ; Sequence note data (up to 64 steps)
+VELOCITY    = $1580             ; Sequence velocity data (up to 64 steps)
 LIBRARY     = $1600             ; Storage for 64 programs (160x64=10240 bytes)
 LIB_TOP     = LibraryH-LibraryL ; Number of library entries
 
@@ -149,12 +153,12 @@ OPENSETUP   = 32                ; Space
 CANCEL      = 8                 ; Back arrow
 OPENHELP    = 43                ; H
 GENERATE    = 19                ; G
-SAVE        = 41                ; S
-LOAD        = 21                ; L
+DISK        = 18                ; S
 SETPRG      = 13                ; P
 CLEAR       = 62                ; CLR
-VOICEDUMP   = 18                ; D
+VOICEDUMP   = 27                ; V
 COPY        = 34                ; C
+REST        = 10                ; R
 RUN         = 24                ; RUN/STOP
 
 ; Field Types
@@ -238,6 +242,7 @@ init_data:  lda #0              ; Initialize
             sta SEQ_XPORT       ;   * Sequencer transport
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta SEQ_REC_IX      ;   * Sequencer record index
+            sta MUTATE          ;   * Generator mutation enable
             lda #1              ;   * MIDI channel
             sta MIDI_CH         ;     ,,
             sta SEED1_PRG       ;   * Generator seed 1
@@ -245,11 +250,12 @@ init_data:  lda #0              ; Initialize
             sta DEVICE_NUM      ;     ,,
             lda #2              ;   * Generator seed 2
             sta SEED2_PRG       ;     ,,
-            lda #16             ;   * Sequencer steps
+            lda #8              ;   * Sequencer steps
             sta SEQ_STEPS       ;     ,,
             lda #64             ;   * Sequencer tempo
             sta SEQ_TEMPO       ;     ,,
-no_sysex:   jsr SwitchPage      ; Generate the edit screen
+            jsr ClearSeq        ; Clear the sequence and velocity data
+            jsr SwitchPage      ; Generate the edit screen
             ldx #SM_WELCOME     ; Show welcome message in status bar
             lda #$a2            ; Set IRQ to 240 per second
             sta $9124           ; ,,
@@ -820,6 +826,7 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             sta PTRD+1          ;   ,,
             ldy CURLIB_IX       ; Now set PTR to the current entry
             jsr SetLibPtr       ; ,,
+            jsr PackLib         ; Pack program data to library prior to copy
             ldy #$9f            ; Perform the copy operation
 -loop:      lda (PTR),y         ; ,,
             sta (PTRD),y        ; ,,
@@ -835,33 +842,76 @@ copy_r:     jsr SwitchPage
             jmp MainLoop
 
 ; Sequencer control
-Sequencer:  lda SHIFT           ; Is Commodore key held down?
+Sequencer:  ldx SEQ_LAST        ; Turn off last note whenever a transport
+            ldy #0              ;   control is activated
+            jsr NOTEOFF         ;   ,,
+            lda SEQ_XPORT       ; Is transport currently on?
+            beq start           ;   If not, start the sequencer
+            lda #0              ; Stop the sequencer
+            sta SEQ_XPORT       ; ,,
+            beq annunciate      ; ,,
+start:      lda SHIFT           ; Is Commodore key held down?
             and #$02            ; ,,
-            beq startstop       ; If not, start/stop the transport
-            lda SEQ_XPORT       ; Toggle the record transport bit
-            eor #$01            ; ,,
-            and #$01            ; and turn off the play transport
+            beq startplay       ; If not, start the playback
+            lda #$01            ; Turn on the record transport bit
             sta SEQ_XPORT       ; ,,
-            ldx #0              ; Reset the record index
-            stx SEQ_REC_IX      ; ,,
-            jmp annunciate
-startstop:  lda SEQ_XPORT       ; Toggle the playback transport 
-            eor #$02            ; ,,
-            and #$02            ; and turn off the record transport
+            lda SEQ_REC_IX      ; Show step number and name
+            jsr ShowStep        ; ,,
+            beq annunciate      ; ,,
+startplay:  lda #" "            ; Clear the note number display
+            sta SCREEN+15       ; ,,
+            sta SCREEN+16       ; ,,
+            sta SCREEN+18       ; ,, And the note name display
+            sta SCREEN+19       ; ,,
+            lda #$02            ; Turn on the record playback bit
             sta SEQ_XPORT       ; ,,
-            ldx #$ff            ; Reset the play index
-            stx SEQ_PLAY_IX     ; ,,
-            inx                 ; Set count to 1 so play starts right away
-            stx SEQ_COUNT       ; ,,
             lda MIDI_CH         ; Set MIDI channel
             sec                 ; ,,
             sbc #1              ; ,,
             jsr SETCH           ; ,,
+            ldx #$ff            ; Reset the play index
+            stx SEQ_PLAY_IX     ; ,,
+            jsr PlayNote        ; Play the first note
 annunciate: ldx SEQ_XPORT       ; Get the sequencer transport graphic
             lda XportAnn,x      ;   from the annunicator table and
-            sta SCREEN+21       ;   put it in the top right corner of
-            jmp MainLoop        ;   the screen
+            sta SCREEN+21       ;   put it in the top right corner.
+seq_r:      jmp MainLoop
 
+; Delete Last Sequencer Note
+DelNote:    lda SEQ_XPORT       ; Is the sequencer in record status?
+            cmp #1              ; ,,
+            bne del_r           ; If not, do nothing
+            lda SEQ_REC_IX      ; Is the record head at the beginning?
+            beq del_r            ;   If so, do nothing
+            dec SEQ_REC_IX      ; Remove the last note
+            lda #0              ; ,,
+            ldy SEQ_REC_IX      ; ,,
+            sta SEQUENCE,y      ; ,,
+            lda SEQ_REC_IX      ; Show new number of steps
+UpdateDisp: jsr TwoDigNum       ; ,,
+            stx SCREEN+15       ; ,,
+            sta SCREEN+16       ; ,,
+            lda #" "            ; Clear out the note name area
+            sta SCREEN+18       ; ,,
+            sta SCREEN+19       ; ,,
+del_r:      jmp MainLoop
+
+; Add Rest to Sequencer
+AddRest:    lda SEQ_XPORT       ; Is the sequencer in record status?
+            cmp #1              ; ,,
+            bne del_r           ; If not, do nothing
+            lda SEQ_REC_IX      ; Is the record head at the end?
+            cmp #64             ;   If so, do nothing
+            beq del_r           ;   ,,
+            ldy SEQ_REC_IX      ; Set 0 for next note and velocity
+            lda #0              ; ,,
+            sta SEQUENCE,y      ; ,,
+            sta VELOCITY,y      ; ,,
+            iny                 ; Increment the record step
+            sty SEQ_REC_IX      ; ,,
+            tya                 ; ,,
+            jmp UpdateDisp      ; Update display, show num but remove name
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1057,7 +1107,7 @@ pi:         lda #$5E
 ; And color appropriately
 ClrScr:     ldx #230            ; Clear the entire screen, except for the
 -loop:      lda #$20            ;   bottom 2 rows, which are used for status,
-            sta SCREEN,x        ;   ,,
+            sta SCREEN+22,x     ;   and the top row, used for the sequencer.
             sta SCREEN+230,x    ;   ,,
             lda #PARCOL         ;   ,, (for parameters)
             sta COLOR,x         ;   ,,
@@ -1306,7 +1356,6 @@ d_nomatch:  inc IX              ; Move to the next library entry
 ; Set PTR before the call with SetLibPtr or Validate            
 DumpLib:    ldy #0              ; Set the output index
 -loop:      lda (PTR),y         ; Get the next byte to output
-            jsr Monitor         ; Send it to the MIDI Monitor display
             jsr MIDIOUT         ; Send it to the Beige Maze MIDI KERNAL
             bcs dump_err        ; Show error if timeout
             cmp #ST_ENDSYSEX    ; Was this an end-of-sysex status?
@@ -1409,7 +1458,6 @@ sm_r:       rts
 ; Returns with carry set if error
 SendSysex:  ldy #0
 -loop:      lda OUTSYSEX,y
-            jsr Monitor
             jsr MIDIOUT
             bcs send_err
             cmp #ST_ENDSYSEX
@@ -1491,9 +1539,11 @@ rnd_r:      rts
 
 ; Send NRPN, if enabled
 ; NRPN index is in X
-NRPNOut:    stx IX
-            lda NRPN_TX
-            beq nrpn_r
+NRPNOut:    lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
+            beq nrpn_r          ; ,,
+            cpx #$90            ; If this is one of the settings
+            bcs nrpn_r          ;   parameters for Ed, do not send to P5
+            stx IX              ; Temporarily store the NRPN number in IX
             ldy MIDI_CH         ; Get MIDI channel
             dey                 ; ,, zero-index it
             tya                 ; ,,
@@ -1521,40 +1571,101 @@ NRPNOut:    stx IX
 nrpn_r:     rts
 
 ; Play Next Note
-; And advance sequencer
-PlayNote:   ldy SEQ_PLAY_IX
-            bmi nextnote
-            lda SEQUENCE,y
-            tax 
-            ldy #0
-            jsr NOTEOFF
-            ldy SEQ_PLAY_IX
-            cmp SEQ_STEPS
-            bne nextnote
-            lda #$ff
-            sta SEQ_PLAY_IX
-nextnote:   inc SEQ_PLAY_IX
-            lda SEQUENCE,y
-            sta SCREEN
-            tax 
-            ldy #64
-            jsr NOTEON
+; and set the countdown timer for the IRQ
+PlayNote:   ldx SEQ_PLAY_IX     ; Is this the last sequencer step?
+            inx                 ; ,,
+            cpx SEQ_STEPS       ; ,,
+            bcc pl              ; If not, play the next step
+            ldx #0              ; Otherwise reset the sequencer
+pl:         stx SEQ_PLAY_IX     ; Store incremented (or reset) index
+            lda VELOCITY,x      ; Get the velocity
+            beq rest            ; Rest if zero velocity
+            tay                 ; ,,
+            lda SEQUENCE,x      ; Get the sequence note number
+            sta SEQ_LAST        ; Store note for next note off
+            tax                 ; ,,
+rest:       jsr NOTEON          ; Send Note On command
+            lda #150            ; Reset the countdown
+            sec                 ; ,,
+            sbc SEQ_TEMPO       ; ,,
+            sta SEQ_COUNT       ; ,,
             rts
-               
+
+; Clear the sequence            
+ClearSeq:   ldy #64             ; Fill 64 bytes
+            lda #0              ; With rests
+-loop:      sta SEQUENCE,y      ; ,,
+            sta VELOCITY,y      ; ,,
+            dey                 ; ,,
+            bne loop            ; ,,
+            rts
+            
+; Show Step
+; Step number in Y
+ShowStep:   cpy #0              ; If step is 0, do not show
+            beq shstep_r        ; ,,
+            lda VELOCITY,y      ; Is this step a rest?
+            bne show_both       ; ,,
+            ldx #" "            ; If so, clear the note name and show only
+            sta SCREEN+18       ;   the step number
+            sta SCREEN+19       ;   ,,
+            bne only_step       ;   ,,
+show_both:  lda SEQUENCE,y      ; Get the note number
+-loop:      cmp #12             ; Show the note name
+            bcc notef           ; ,,
+            sbc #12             ; ,,
+            bcs loop            ; ,,
+notef:      tax                 ; X is now the remainder
+            lda NoteName,x      ; Get the note name
+            sta SCREEN+18       ;   ,,
+            lda Accidental,x    ;   and accidental
+            sta SCREEN+19       ;   ,,   
+only_step:  lda SEQUENCE,y      ; Show note number         
+            jsr TwoDigNum       ; ,,
+            stx SCREEN+15       ; ,,
+            sta SCREEN+16       ; ,, 
+shstep_r:   rts 
+                           
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERRUPT HANDLERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; IRQ handles sequencer playback
 IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             cmp #$02            ; ,,
+            beq playback        ; ,,
+            cmp #$01            ; Is Record enabled?
+            bne irq_r           ; If not, return
+            jsr GETMSG          ; Has a complete MIDI message been received?
+            bcc irq_r           ; ,,
+            cmp #ST_NOTEON      ; And is it a note on message?
             bne irq_r           ; ,,
-            dec SEQ_COUNT       ; If so, do the countdown
-            bne irq_r           ; If not there yet, return
+            tya                 ; If so, move Velocity to A
+            ldy SEQ_REC_IX      ;   Get index to the current record step
+            sta VELOCITY,y      ;   and store velocity
+            txa                 ; Now move note number to A
+            sta SEQUENCE,y      ;   and store note number
+            pha
+            iny                 ; Increment the record index
+            sty SEQ_REC_IX      ; ,,
+            jsr ShowStep        ; Show step number and note name
+            cpy #64             ; Has it reached 64 notes (maximum)?
+            bcc irq_r           ; If not, just return
+            lda #0              ; Otherwise, reset the record index
+            sta SEQ_REC_IX      ; ,,
+            beq irq_r
+playback:   dec SEQ_COUNT       ; If play is enabled, do the countdown
+            beq adv             ; Advance sequencer if count is 0
+            lda SEQ_COUNT       ; Just before count finishes, 
+            cmp #16             ;   ,,
+            bne irq_r           ;   ,,
+            ldx SEQ_LAST        ;   turn off previous note
+            ldy #0              ;   ,,
+            jsr NOTEOFF         ;   ,,
+            jmp $eb12
+adv:        lda SCREEN+21       ; Flash annunciator at tempo
+            eor #$1e            ; ,,
+            sta SCREEN+21       ; ,,
             jsr PlayNote        ; Play the next note
-            lda #$ff            ; Reset the countdown
-            sec                 ; ,,
-            sbc SEQ_TEMPO       ; ,,
-            sta SEQ_COUNT       ; ,,
 irq_r:      jmp $eb12           ; Scan keyboard and RTI
 
 
@@ -1567,11 +1678,14 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             jsr CHKMIDI         ; Is this a MIDI-based interrupt?
             bne midi            ;   If so, handle MIDI input
             jmp SYSNMI          ; Back to normal NMI, after register saves
-midi:       jsr MIDIIN
-            jsr Monitor         ; Show MIDI byte indicator
-            ldy SEQ_XPORT       ; If in note record mode, ignore sysex
+midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
-            beq notes           ; ,,
+            bne sysexwait       ; ,,
+            jsr MAKEMSG         ; Build MIDI message
+            jsr Monitor         ; Show MIDI byte indicator
+            jmp RFI             ; Restore registers and return from interrupt
+sysexwait:  jsr MIDIIN
+            jsr Monitor         ; Show MIDI byte indicator            
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             sec                 ;   set sysex listen flag
@@ -1601,25 +1715,26 @@ sydone:     clc                 ;   ,,
             beq r_isr           ;   library index
             inc TGTLIB_IX       ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
-notes:      bit N_LISTEN        ; Are we waiting for a note?
-            bpl note_on 
-            clc 
-            ror N_LISTEN
-            ldx SEQ_REC_IX 
-            sta SEQUENCE,x
-            cpx #63
-            beq r_isr
-            inc SEQ_REC_IX
-            bne r_isr
-note_on:    sta SYIN_IX         ; Temporary storage of incoming MIDI
-            lda #$90            ; Create a note-on template consisting of
-            clc                 ;   status and MIDI channel
-            adc MIDI_CH         ;   ,,
-            sbc #0              ;   ,, (1 indexed in memory)
-            cmp SYIN_IX         ; Is this equal to the incoming byte?
-            bne r_isr           ; If no, return from interrupt
-            ror N_LISTEN
-            jmp RFI
+
+;notes:      bit N_LISTEN        ; Are we waiting for a note?
+;            bpl note_on 
+;            clc 
+;            ror N_LISTEN
+;            ldx SEQ_REC_IX 
+;            sta SEQUENCE,x
+;            cpx #63
+;            beq r_isr
+;            inc SEQ_REC_IX
+;            bne r_isr
+;note_on:    sta SYIN_IX         ; Temporary storage of incoming MIDI
+;            lda #$90            ; Create a note-on template consisting of
+;            clc                 ;   status and MIDI channel
+;            adc MIDI_CH         ;   ,,
+;            sbc #0              ;   ,, (1 indexed in memory)
+;            cmp SYIN_IX         ; Is this equal to the incoming byte?
+;            bne r_isr           ; If no, return from interrupt
+;            ror N_LISTEN
+;            jmp RFI
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA FIELDS
@@ -1788,17 +1903,17 @@ LibDiv:     .byte 0,19,39,59
 ; Key command subtroutine addresses
 KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
-            .byte VOICEDUMP,CLEAR,COPY,RUN,0
+            .byte VOICEDUMP,CLEAR,COPY,RUN,REST,BACKSP,0
 CommandL:   .byte <PageSel-1,<PageSel-1,<PageSel-1,<PageSel-1
             .byte <PrevField-1,<NextField-1,<IncValue-1,<DecValue-1
             .byte <BufferSend-1,<EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceDump-1
-            .byte <Erase-1,<CopyLib-1,<Sequencer-1
+            .byte <Erase-1,<CopyLib-1,<Sequencer-1,<AddRest-1,<DelNote-1
 CommandH:   .byte >PageSel-1,>PageSel-1,>PageSel-1,>PageSel-1
             .byte >PrevField-1,>NextField-1,>IncValue-1,>DecValue-1
             .byte >BufferSend-1,>EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceDump-1
-            .byte >Erase-1,>CopyLib-1,>Sequencer-1
+            .byte >Erase-1,>CopyLib-1,>Sequencer-1,>AddRest+1,>DelNote-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
@@ -1848,7 +1963,7 @@ FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
             .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3
-            .byte 4,4,4,4,4,4,4
+            .byte 4,4,4,4,4,4,4,4
             .byte 5
 LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
@@ -1857,15 +1972,15 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,7,8,9,10,13,14,15,16
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
             .byte 1,2,3,4,7,8,9,10,11,12,13,14,15,16
-            .byte 5,6,7,10,11,14,15
+            .byte 5,6,7,10,11,14,15,16
             .byte 19
 
 ; Field column
-FCol:       .byte 1,3,8,14,14,10,3,8,12,14,14,14,10,10,14,14,14
+FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14  
-            .byte 14,14,8,8,8,14,14,3,8,12,14,8,8,8,8,8
+            .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14
-            .byte 14,14,14,14,14,14,14
+            .byte 14,14,14,14,14,14,14,14
             .byte 1
 
 ; Field type
@@ -1884,7 +1999,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_WHEEL,F_SWITCH,F_SWITCH,F_XVALUE
             .byte F_SWITCH,F_SWITCH,F_XVALUE,F_SWITCH
             
-            .byte F_MIDICH,F_SWITCH,F_DEVICE,F_64,F_XVALUE,F_64,F_64
+            .byte F_MIDICH,F_SWITCH,F_DEVICE,F_64,F_VALUE,F_64,F_64,F_SWITCH
             
             .byte F_NONE
 
@@ -1895,7 +2010,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98,51
             ; These are not really NRPN numbers, but use the CURPRG storage
             ; for menu settings
-            .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6
+            .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7
             .byte $ff
 
 ; Edit Page Fields
@@ -1985,23 +2100,24 @@ Setup:      .asc CR,"   ED FOR PROPHET 5",CR
             .asc CR,"GENERATION",CR
             .asc RT,"SEED",CR
             .asc RT,"SEED",CR
+            .asc RT,"MUTATE"
             .asc 00
             
-Help:       .asc CR," SPACE SETUP",CR
+Help:       .asc CR," WWW.BEIGEMAZE.COM/ED",CR,CR,CR
+            .asc " SPACE SETUP",CR
             .asc " F1-F7 EDIT SCREEN",CR
             .asc " CRSR  PARAM",CR
             .asc " < >   EDIT VALUE",CR
             .asc " - +   LIBRARY",CR
             .asc " B     EDIT BUFFER",CR
-            .asc " D     VOICE DUMP",CR
+            .asc " V     VOICE DUMP",CR
             .asc " G     GENERATE",CR
             .asc " P     SET PROG #",CR
+            .asc " CLR   ERASE",CR
             .asc " C     COPY",CR
-            .asc " S     SAVE",CR
-            .asc " L     LOAD",CR
-            .asc " RUN   SEQUENCE",CR,CR
-            .asc " MORE @",CR
-            .asc " WWW.BEIGEMAZE.COM/ED"
+            .asc " D     DISK",CR
+            .asc " RUN   PLAY/STOP",CR
+            .asc " C=RUN REC",CR
             .asc 00
 
 ; Popup Window            
