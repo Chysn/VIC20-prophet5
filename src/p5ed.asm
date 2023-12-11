@@ -52,12 +52,13 @@ S_BANK      = $034c             ; Bank search
 DUMPTYPE    = $034d             ; Bit 7 set = Group, clear = Bank
 DEST10      = $034e             ; Tens digit of copy destination
 DEST1       = $034f             ; Ones digit of copy destination
-
 SEQ_XPORT   = $0350             ; Sequence transport (bit0=rec, 7=play, 0=stop)
 SEQ_PLAY_IX = $0351             ; Sequence play note index
 SEQ_REC_IX  = $0352             ; Sequence record index
 SEQ_COUNT   = $0353             ; Sequence note countdown
 SEQ_LAST    = $0354             ; Sequence last note played
+RANDOM      = $0355             ; Random number for mutation
+FILENAME    = $0356             ; KERNAL filename ($0356-$035f)
 
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
 NRPN_TX     = CURPRG+$a1        ; NRPN Transmit toggle
@@ -71,10 +72,10 @@ MUTATE      = CURPRG+$a7        ; Mutate flag
 ; Application Data Storage
 OUTSYSEX    = $1200             ; Outgoing sysex stage
 CURPRG      = $1300             ; Current program indexed buffer (128 bytes)
-SEED1       = $1400             ; Seed 1 program for generator (128 bytes)
-SEED2       = $1480             ; Seed 2 program for generator (128 bytes)
-SEQUENCE    = $1500             ; Sequence note data (up to 64 steps)
-VELOCITY    = $1580             ; Sequence velocity data (up to 64 steps)
+SEED1       = $1480             ; Seed 1 program for generator (128 bytes)
+SEED2       = $1500             ; Seed 2 program for generator (128 bytes)
+SEQUENCE    = $1580             ; Sequence note data (up to 64 steps)
+VELOCITY    = $15c0             ; Sequence velocity data (up to 64 steps)
 LIBRARY     = $1600             ; Storage for 64 programs (160x64=10240 bytes)
 LIB_TOP     = LibraryH-LibraryL ; Number of library entries
 
@@ -96,6 +97,9 @@ SM_WELCOME  = 4
 SM_GEN      = 5
 SM_BLANK    = 6
 SM_COPIED   = 7
+SM_SAVING   = 8
+SM_LOADING  = 9
+SM_OK       = 10
 
 ; Character Constants
 CR          = $0d               ; Carriage return PETSCII
@@ -110,6 +114,7 @@ SW_ON       = $51               ; Switch on screen code
 SW_OFF      = $57               ; Switch off screen code
 CURSOR      = $6c               ; Cursor screen code PETSCII
 TL          = $a3               ; Top line PETSCII
+BL          = $d2               ; Bottom line PETSCII
 TXTCURSOR   = $6f               ; Text edit cursor
 P_TL        = 213               ; POPUP WINDOW - top left
 P_T         = 195               ;                top
@@ -153,13 +158,14 @@ OPENSETUP   = 32                ; Space
 CANCEL      = 8                 ; Back arrow
 OPENHELP    = 43                ; H
 GENERATE    = 19                ; G
-DISK        = 18                ; S
 SETPRG      = 13                ; P
 CLEAR       = 62                ; CLR
 VOICEDUMP   = 27                ; V
 COPY        = 34                ; C
 REST        = 10                ; R
 RUN         = 24                ; RUN/STOP
+DSAVE       = 41                ; S 
+DLOAD       = 21                ; L
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -177,6 +183,7 @@ F_MIDICH    = 11                ; MIDI Channel (1-16)
 F_DEVICE    = 12                ; Storage Device Number (8-11)
 F_64        = 13                ; Program number, step count
 F_NONE      = 14                ; Blank field
+F_MUTATIONS = 15                ; Number of mutations
 
 ; System Resources
 CINV        = $0314             ; ISR vector
@@ -194,6 +201,19 @@ HOME        = $e581             ; Home cursor
 CLSR        = $e55f             ; Clear screen
 SHIFT       = $028d             ; SHIFT key status
 VIAT        = $9114             ; VIA Timer (2 bytes)
+MSGFLG      = $9d               ; KERNAL message mode flag,
+
+; Disk KERNAL Calls
+SETLFS      = $ffba             ; Setup logical file
+SETNAM      = $ffbd             ; Setup file name
+SAVE        = $ffd8             ; Save
+LOAD        = $ffd5             ; Load
+OPEN        = $ffc0             ; Open logical file
+CLOSE       = $ffc3             ; Close logical file
+CLALL       = $ffe7             ; Close all files
+CHKIN       = $ffc6             ; Define file as input
+CHRIN       = $ffcf             ; Get input
+CLRCHN      = $ffcc             ; Close channel
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
@@ -243,6 +263,7 @@ init_data:  lda #0              ; Initialize
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta SEQ_REC_IX      ;   * Sequencer record index
             sta MUTATE          ;   * Generator mutation enable
+            sta MSGFLG          ;   * Disable KERNAL messages
             lda #1              ;   * MIDI channel
             sta MIDI_CH         ;     ,,
             sta SEED1_PRG       ;   * Generator seed 1
@@ -318,9 +339,19 @@ SysexFail:  ldx #SM_FAIL
 ; Previous Library Entry
 PrevLib:    ldy CURLIB_IX
             jsr PackLib
-            lda CURLIB_IX
-            beq chlib_r
-            dec CURLIB_IX
+            lda #1              ; Default value to substract, one
+            sta IX              ; ,,
+            ldy SHIFT           ; If shift is held, decrement by 10 instead
+            beq pl_def          ; ,,
+            lda #10             ; ,,
+            sta IX              ; ,,
+pl_def:     lda CURLIB_IX       ; Subtract the specified number from the
+            sec                 ;   library number
+            sbc IX              ;   ,,
+            sta CURLIB_IX       ;   ,,
+            bcs switchlib       ; If it's below 0, set it back to 0
+            lda #0              ; ,,
+            sta CURLIB_IX       ; ,,
 switchlib:  jsr ClrCursor
             ldy CURLIB_IX
             sty TGTLIB_IX
@@ -335,12 +366,20 @@ chlib_r:    jmp MainLoop
 ; Next Library Entry
 NextLib:    ldy CURLIB_IX
             jsr PackLib
-            inc CURLIB_IX
-            lda #LIB_TOP
-            cmp CURLIB_IX
-            bne switchlib
-            dec CURLIB_IX
-            jmp MainLoop
+            lda #1              ; Default value to add, one
+            sta IX              ; ,,
+            ldy SHIFT           ; If shift is held, increment by 10 instead
+            beq nl_def          ; ,,
+            lda #10             ; ,,
+            sta IX              ; ,,
+nl_def:     lda CURLIB_IX       ; Add the specified number to the
+            clc                 ;   library number
+            adc IX              ;   ,,
+            cmp #LIB_TOP        ; If it overflows, set back to 64
+            bcc nl_set          ; ,,
+            lda #LIB_TOP-1      ; ,,
+nl_set:     sta CURLIB_IX       ; Store the new index
+            jmp switchlib       ; Swith library from PrevLib
                       
 ; Select Page           
 PageSel:    sec
@@ -364,8 +403,6 @@ GoSetup:    lda #4
             beq setup_r
             sta PAGE
             jsr SwitchPage
-            lda #0              ; Hide random cursor on help screen
-            sta COLOR+440       ; ,,
 setup_r:    jmp MainLoop
             
 ; Select Library Section
@@ -462,7 +499,9 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             sta CURPRG,x        ;   ,,   and save that
             jmp val_ch          ;   ,,
 adv_f:      inc CURPRG,x        ;   ,,
-val_ch:     ldy FIELD_IX        ;   ,,
+val_ch:     ldx FIELD_IX        ;   Send NRPN, if enabled
+            jsr NRPNOut         ;   ,,
+            ldy FIELD_IX        ;   Draw the new field value
             jsr DrawField       ;   ,,
             jmp MainLoop        ;   ,,
 edit_name:  jsr ClrCursor       ; Clear cursor during name edit
@@ -543,7 +582,7 @@ bsend_r:    jmp MainLoop
 ; From two spefcified parent programs in the library
 Generate:   lda PAGE            ; Generate only works on edit screens
             cmp #4              ; ,,
-            bcs gen_r           ; ,,
+            bcs bsend_r         ; ,, (using bsend_r above for range reasons)
             ldy CURLIB_IX       ; First, make sure that the current library
             jsr Validate        ;   entry is either invalid, or lacks a
             bne gen_ok          ;   program number. We don't want to overwrite
@@ -590,6 +629,23 @@ s1:         txa                 ;   ,,
             sta CURPRG,y        ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
+            lda MUTATE          ; Mutate generated program if enabled
+            beq no_mutate       ; ,,
+            sta IX              ; Store mutation count
+mutate:     jsr Rand31          ; Get five-bit pseudorandom number
+            cmp #22             ; Find a mutable parameter index
+            bcs mutate          ; ,,
+            tax                 ; Get the NRPN index of a mutable parameter
+            lda Mutable,x       ;   ,,
+            tax                 ;   which is in X
+-loop:      jsr Rand127         ; Get a value between 0-120
+            cmp #121            ; ,,
+            bcs loop            ; ,,
+            sta CURPRG,x        ; Store it in the current program
+            dec IX              ; Decrement the mutation count
+            bne mutate          ; Go back for more
+no_mutate:  jsr SetLibPtr       ; ,,
+            jsr PackLib         ; Pack program data to library
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
             jsr PopFields       ; Update the buffer fields in the interface
@@ -606,6 +662,9 @@ SetPrg:     lda PAGE            ; Set Program only works on edit screens
             jsr PRSTR
             ldy CURLIB_IX       ; Get program location to PRGLOC
             jsr PrgLoc          ; ,,
+            lda PTR             ; Unpack buffer prior to program # change
+            ldy PTR+1           ; ,,
+            jsr UnpBuff         ; ,,
             ldy #3              ; Set up editor with current program
             sty IX              ; ,, Set current cursor position
             lda #TXTCURSOR      ; ,, Add cursor at end
@@ -654,8 +713,6 @@ pbacksp:    ldy IX
 pdone:      ldy IX              ; If edit isn't complete, then do nothing
             cpy #3              ; ,,
             bne pn_inval        ; ,,
-            ldy CURLIB_IX       ; Editing is done, so update the sysex in 
-            jsr SetLibPtr       ;   the library.
             lda PRGLOC          ; First character
             cmp #"-"            ;   If it's still "-" then it's invalid
             beq pn_inval        ;   ,,
@@ -911,10 +968,130 @@ AddRest:    lda SEQ_XPORT       ; Is the sequencer in record status?
             sty SEQ_REC_IX      ; ,,
             tya                 ; ,,
             jmp UpdateDisp      ; Update display, show num but remove name
+
+; Disk Save
+GoSave:     jsr StopSeq
+            jsr Popup
+            lda #<SaveLabel
+            ldy #>SaveLabel
+            jsr PRSTR    
+            jsr SetName         ; SetName calls SETNAM
+            bcs disk_c          ; Cancel, so return
+            ldx DEVICE_NUM      ; Device number
+            ldy #0              ; Command (none)
+            jsr SETLFS          ; ,,                  
+            bcs disk_r        
+            ldx #SM_SAVING
+            jsr Status
+            lda #<SEQUENCE
+            sta $c1
+            lda #>SEQUENCE
+            sta $c2
+            ldx #$00
+            ldy #$3e
+            lda #$c1
+            jsr SAVE
+            bcc disk_r
+            jmp DiskError
+
+; Disk Load
+GoLoad:     jsr StopSeq
+            jsr Popup
+            lda #<LoadLabel
+            ldy #>LoadLabel
+            jsr PRSTR    
+            jsr SetName         ; SetName calls SETNAM
+            bcs disk_c          ; Cancel, so return
+            ldx DEVICE_NUM      ; Device number
+            ldy #1              ; Load to header location
+            jsr SETLFS          ; ,,
+            ldx #SM_LOADING
+            jsr Status            
+            lda #0              ; Perform load
+            jsr LOAD            ; ,,      
+            bcc load_ok
+            jmp DiskError
+load_ok:    ldy CURLIB_IX       ; After successful load, unpack the current
+            jsr SetLibPtr       ;   (probably new) library entry to the
+            lda PTR             ;   program buffer
+            ldy PTR+1           ;   ,,
+            jsr UnpBuff         ;   ,,
+            
+            ; Shared exit points for both save and load
+disk_r:     ldx #SM_OK          ; Show success message
+            .byte $3c           ; Skip word (SKW)
+disk_c:     ldx #SM_BLANK       ; Show no message
+            jsr Status          ; ,,
+            jsr SwitchPage      ; Back to main
+            jmp MainLoop        ; ,,
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Filename Field
+; If canceled, return with carry set
+; If OK, return with carry clear and call SETNAM
+SetName:    lda #"."            ; Add file extension .ED
+            sta WINDOW_ED+7     ; ,,
+            lda #5               ; ,,
+            sta WINDOW_ED+8     ; ,,
+            lda #4              ; ,,
+            sta WINDOW_ED+9     ; ,,
+            ldy #0              ; Set up editor with cursor position set
+            sty IX              ;   at the beginning            
+            lda #TXTCURSOR      ;   ,,
+            sta WINDOW_ED,y     ;   ,,
+fgetkey:    jsr Keypress        ; Keycode in Y, PETSCII in A
+            cpy #CANCEL         ; Cancel
+            bne fch_bk          ; ,,
+            sec 
+            rts
+fch_bk:     cpy #BACKSP         ; Has backspace been pressed?
+            beq fbacksp          ; ,,
+            cpy #EDIT           ; Has return been pressed?
+            beq fdone           ; ,,
+            cmp #"0"            ; Constrain values for character
+            bcc fgetkey         ; ,,
+            cmp #"Z"+1          ; ,,
+            bcs fgetkey         ; ,,
+            ldy IX              ; ,,
+            cpy #6              ; Limit size of filename
+            bcs fgetkey         ; ,,
+            sta FILENAME,y      ; Store PETSCII in FILENAME storage
+            jsr PETtoScr        ; Convert to screen code for display
+            ldy IX              ; ,,
+            sta WINDOW_ED,y     ; ,,
+            inc IX              ; Advance the cursor
+fpos_cur:   lda #TXTCURSOR      ; ,, Add cursor at end
+            ldy IX              ; ,,
+            sta WINDOW_ED,y     ; ,,
+            bne fgetkey         ; ,,
+fbacksp:    ldy IX
+            beq fgetkey
+            lda #" "
+            sta WINDOW_ED,y
+            sta FILENAME,y
+            dec IX
+            jmp fpos_cur
+fdone:      ldy IX
+            cpy #0              ; Do not allow RETURN if there's no name
+            beq fgetkey         ; ,,
+            lda #"."            ; Add file extension .ED
+            sta FILENAME,y      ; ,,
+            iny                 ; ,,
+            lda #"E"            ; ,,
+            sta FILENAME,y      ; ,,
+            iny                 ; ,,
+            lda #"D"            ; ,,
+            sta FILENAME,y      ; ,,
+            iny                 ; ,,
+            tya                 ; Length of name for SETNAM call
+            ldx #<FILENAME      ; Pointer to name (low)
+            ldy #>FILENAME      ; Pointer to name (high)
+            jsr SETNAM          ; Call SETNAM
+            clc                 ; Carry clear for return
+            rts
+
 ; Prepare Field
 ; for increment or decrement
 PrepField:  ldy FIELD_IX
@@ -964,7 +1141,10 @@ PopFields:  ldy CURLIB_IX       ; Get current library entry
             sta STATUSDISP-22   ;   so it's easier to read
             sta STATUSDISP-21   ;   ,,
             ldx PAGE
-            ldy TopParamIX,x
+            cpx #5              ; If Help page, do not populate any fields
+            bne params          ; ,,
+            rts                 ; ,,
+params:     ldy TopParamIX,x
 -loop:      lda FPage,y         ; Get the page number of the field
             cmp PAGE            ; Is the next field on the current page? 
             bne DrawCursor      ; If not, then fields are done
@@ -995,6 +1175,8 @@ DrawCursor: ldy FIELD_IX
 dc_r:       rts
           
 ; Clear Previous Cursor 
+; Alias as the Blank field type
+Blank:
 ClrCursor:  ldy FIELD_IX        ; Remove the previous cursor
             lda FRow,y          ; ,,
             jsr FieldRow        ; ,,
@@ -1106,7 +1288,7 @@ pi:         lda #$5E
 ; Clear Screen
 ; And color appropriately
 ClrScr:     ldx #230            ; Clear the entire screen, except for the
--loop:      lda #$20            ;   bottom 2 rows, which are used for status,
+-loop:      lda #" "            ;   bottom 2 rows, which are used for status,
             sta SCREEN+22,x     ;   and the top row, used for the sequencer.
             sta SCREEN+230,x    ;   ,,
             lda #PARCOL         ;   ,, (for parameters)
@@ -1269,10 +1451,17 @@ ProgPopup:  ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
             rts
             
 ; Draw Popup Window
-Popup:      jsr HOME
-            lda #<Window
-            ldy #>Window
-            jsr PRSTR
+Popup:      ldy #230            ; Color everything blue before opening
+            lda #6              ;   a popup window
+-loop:      sta COLOR,y         ;   ,,
+            sta COLOR+230,y     ;   ,,
+            dey                 ;   ,,
+            cpy #0              ;   ,,
+            bne loop            ;   ,,
+            jsr HOME            ; Places a popup window, and positions cursor
+            lda #<Window        ;   for a top-line label
+            ldy #>Window        ;   ,,
+            jsr PRSTR           ;   ,,
             rts
             
 ; Get Key Press
@@ -1430,8 +1619,11 @@ hdr_ok:     lda PTR
             sta P_END+1
             jsr Pack
             lda #ST_ENDSYSEX
-            ldy #$9e 
-            sta (PTR),y
+            ldy #$9e            ; Make sure that the byte in offset $9E is
+            sta (PTR),y         ;   the end of sysex, and that the byte in 
+            iny                 ;   offset $9F is $FE (active sensing)
+            lda #ST_SENSE       ;   ,,
+            sta (PTR),y         ;   ,,
             rts
                         
 ; Construct Sysex Message
@@ -1535,7 +1727,19 @@ PRand:      lsr P_RAND
             lda P_RAND+1
             eor #$2b
             sta P_RAND+1
-rnd_r:      rts  
+rnd_r:      rts
+
+; Get random numbers of specified sizes
+; For mutation
+Rand31:     lda #%00001000      ; 5-bit 
+            .byte $3c           ; Skip word (SKW)
+Rand127:    lda #%00000010      ; 7-bit
+            sta RANDOM
+-loop:      jsr PRand
+            rol RANDOM
+            bcc loop
+            lda RANDOM
+            rts
 
 ; Send NRPN, if enabled
 ; NRPN index is in X
@@ -1599,6 +1803,17 @@ ClearSeq:   ldy #64             ; Fill 64 bytes
             dey                 ; ,,
             bne loop            ; ,,
             rts
+
+; Stop the sequencer            
+; For disk operations
+StopSeq:    ldx SEQ_LAST        ; Turn off previous note
+            ldy #0              ;   ,,
+            jsr NOTEOFF         ;   ,,
+            lda #0              ; Turn off sequencer
+            sta SEQ_XPORT       ; ,,
+            lda #" "            ; Turn off sequence annunciator
+            sta SCREEN+21       ; ,, 
+            rts
             
 ; Show Step
 ; Step number in Y
@@ -1625,6 +1840,12 @@ only_step:  lda SEQUENCE,y      ; Show note number
             stx SCREEN+15       ; ,,
             sta SCREEN+16       ; ,, 
 shstep_r:   rts 
+
+; Disk Error Message
+DiskError:  ldx #SM_FAIL
+            jsr Status
+            jsr SwitchPage
+            jmp MainLoop
                            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERRUPT HANDLERS
@@ -1644,7 +1865,6 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             sta VELOCITY,y      ;   and store velocity
             txa                 ; Now move note number to A
             sta SEQUENCE,y      ;   and store note number
-            pha
             iny                 ; Increment the record index
             sty SEQ_REC_IX      ; ,,
             jsr ShowStep        ; Show step number and note name
@@ -1715,26 +1935,6 @@ sydone:     clc                 ;   ,,
             beq r_isr           ;   library index
             inc TGTLIB_IX       ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
-
-;notes:      bit N_LISTEN        ; Are we waiting for a note?
-;            bpl note_on 
-;            clc 
-;            ror N_LISTEN
-;            ldx SEQ_REC_IX 
-;            sta SEQUENCE,x
-;            cpx #63
-;            beq r_isr
-;            inc SEQ_REC_IX
-;            bne r_isr
-;note_on:    sta SYIN_IX         ; Temporary storage of incoming MIDI
-;            lda #$90            ; Create a note-on template consisting of
-;            clc                 ;   status and MIDI channel
-;            adc MIDI_CH         ;   ,,
-;            sbc #0              ;   ,, (1 indexed in memory)
-;            cmp SYIN_IX         ; Is this equal to the incoming byte?
-;            bne r_isr           ; If no, return from interrupt
-;            ror N_LISTEN
-;            jmp RFI
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA FIELDS
@@ -1761,8 +1961,8 @@ rem:        eor #$ff            ; Handle the remainder by looking up 255-R
             iny                 ; ,,
             cpy #8              ; ,,
             bne loop            ; ,,
-Blank:      rts                 ; Alias for the F_NONE field
-
+            rts                  ; ,,
+           
 ; Draw Switch
 ; At field location            
 Switch:     cmp #1
@@ -1877,7 +2077,7 @@ haveoct:    pha                 ; Save the note number for later lookup
 ; DATA TABLES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Status messages
-Failed:     .asc "FAILED!   ",0
+Failed:     .asc "FAILED    ",0
 Received:   .asc "REC'D  000",0
 Sent:       .asc "SENT OK   ",0
 ChLib:      .asc "PROG   000",0
@@ -1885,10 +2085,13 @@ Welcome:    .asc "H FOR HELP",0
 Generated:  .asc "GENERATED ",0
 ClrStatus:  .asc "          ",0
 Copied:     .asc "COPIED    ",0
+Saving:     .asc "SAVING... ",0
+Loading:    .asc "LOADING...",0
+Success:    .asc "SUCCESS!  ",0
 StatusL:    .byte <Failed,<Received,<Sent,<ChLib,<Welcome,<Generated
-            .byte <ClrStatus,<Copied
+            .byte <ClrStatus,<Copied,<Saving,<Loading,<Success
 StatusH:    .byte >Failed,>Received,>Sent,>ChLib,>Welcome,>Generated
-            .byte >ClrStatus,>Copied
+            .byte >ClrStatus,>Copied,>Saving,>Loading,>Success
 
 ; MIDI Messages and Headers
 EditBuffer: .byte $f0, $01, $32, $03, $ff
@@ -1900,33 +2103,39 @@ BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 ; Library Divisions
 LibDiv:     .byte 0,19,39,59
 
+; Mutable Parameters
+; NRPN numbers
+Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
+
 ; Key command subtroutine addresses
 KeyCode:    .byte F1,F3,F5,F7,PREV,NEXT,INCR,DECR,SEND2BUFF,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
-            .byte VOICEDUMP,CLEAR,COPY,RUN,REST,BACKSP,0
+            .byte VOICEDUMP,CLEAR,COPY,RUN,REST,BACKSP,DSAVE,DLOAD,0
 CommandL:   .byte <PageSel-1,<PageSel-1,<PageSel-1,<PageSel-1
             .byte <PrevField-1,<NextField-1,<IncValue-1,<DecValue-1
             .byte <BufferSend-1,<EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceDump-1
             .byte <Erase-1,<CopyLib-1,<Sequencer-1,<AddRest-1,<DelNote-1
+            .byte <GoSave-1,<GoLoad-1
 CommandH:   .byte >PageSel-1,>PageSel-1,>PageSel-1,>PageSel-1
             .byte >PrevField-1,>NextField-1,>IncValue-1,>DecValue-1
             .byte >BufferSend-1,>EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceDump-1
             .byte >Erase-1,>CopyLib-1,>Sequencer-1,>AddRest+1,>DelNote-1
+            .byte >GoSave-1,>GoLoad-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
 ; 7=Name, 8=Unison Voice Count, 9=Unison Retrigger, 10=Frequency
-; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field
+; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations
 TSubL:      .byte <ValBar-1,<ValBar-1,<Switch-1,<Track-1
             .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
-            .byte <Num-1,<Num-1,<Num-1,<Blank-1
+            .byte <Num-1,<Num-1,<Num-1,<Blank-1,<Num-1
 TSubH:      .byte >ValBar-1,>ValBar-1,>Switch-1,>Track-1
             .byte >Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1,>Freq-1
-            .byte >Num-1,>Num-1,>Num-1,>Blank-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0,  1 , 8, 1,0
-TRangeH:    .byte 120,127,1,2,7,11,1,90,10, 3,120,16,11,64,0
+            .byte >Num-1,>Num-1,>Num-1,>Blank-1,>Num-1
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0,  1 , 8, 1,0, 0
+TRangeH:    .byte 120,127,1,2,7,11,1,90,10, 3,120,16,11,64,0,10
 
 ; Enum field values
 NoTrack:    .asc "NONE",0
@@ -1973,7 +2182,7 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
             .byte 1,2,3,4,7,8,9,10,11,12,13,14,15,16
             .byte 5,6,7,10,11,14,15,16
-            .byte 19
+            .byte 0
 
 ; Field column
 FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
@@ -1999,7 +2208,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_WHEEL,F_SWITCH,F_SWITCH,F_XVALUE
             .byte F_SWITCH,F_SWITCH,F_XVALUE,F_SWITCH
             
-            .byte F_MIDICH,F_SWITCH,F_DEVICE,F_64,F_VALUE,F_64,F_64,F_SWITCH
+            .byte F_MIDICH,F_SWITCH,F_DEVICE,F_64,F_VALUE,F_64,F_64,F_MUTATIONS
             
             .byte F_NONE
 
@@ -2100,7 +2309,7 @@ Setup:      .asc CR,"   ED FOR PROPHET 5",CR
             .asc CR,"GENERATION",CR
             .asc RT,"SEED",CR
             .asc RT,"SEED",CR
-            .asc RT,"MUTATE"
+            .asc RT,"MUTATIONS"
             .asc 00
             
 Help:       .asc CR," WWW.BEIGEMAZE.COM/ED",CR,CR,CR
@@ -2115,7 +2324,8 @@ Help:       .asc CR," WWW.BEIGEMAZE.COM/ED",CR,CR,CR
             .asc " P     SET PROG #",CR
             .asc " CLR   ERASE",CR
             .asc " C     COPY",CR
-            .asc " D     DISK",CR
+            .asc " L     LOAD",CR
+            .asc " S     SAVE",CR
             .asc " RUN   PLAY/STOP",CR
             .asc " C=RUN REC",CR
             .asc 00
@@ -2137,6 +2347,8 @@ Window:     .asc 5 ; White
             .asc 30,00
             
 PrgLabel:   .asc 5,"PROGRAM #",30,0
+SaveLabel:  .asc 5,"SAVE...",30,0
+LoadLabel:  .asc 5,"LOAD...",30,0
 DumpMenu:   .asc 5,"VOICE DUMP",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROGRAM   ",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
