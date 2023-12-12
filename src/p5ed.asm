@@ -61,6 +61,7 @@ FILENAME    = $0356             ; KERNAL filename ($0356-$035f)
 PROGNAME    = $0360             ; Unpacked program name ($0360-$0375)
 DRAW_IX     = $0376             ; Drawn field index
 VIEW_IX     = $0377             ; Field index in Library View
+LAST_LIB_IX = $0378             ; Last index in Library View
 
 DISKSETTING = $3e00             ; Memory for these settings on disk
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
@@ -411,8 +412,10 @@ read_r:     jmp MainLoop
 LibView:    tay                 ; Get library division for this key
             lda LibDiv,y        ; Set view starting point
             sta VIEW_START      ; ,,
-            lda #6              ; Set page number
+            lda #4              ; Set page number
             sta PAGE            ; ,,
+            lda TopParamIX+4    ; Set last library index
+            sta LAST_LIB_IX     ; ,,
             jsr SwitchPage      ; Draw the page header
             jmp MainLoop
             
@@ -426,6 +429,7 @@ PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
             jsr ClrCursor
             dey
             sty FIELD_IX
+            jsr LibViewF        ; Handle library change if in Library View
             jsr DrawCursor
 pf_r:       jmp MainLoop
 
@@ -440,6 +444,7 @@ NextField:  ldy FIELD_IX
             jsr ClrCursor
             iny
             sty FIELD_IX
+            jsr LibViewF        ; Handle library change if in Library View
             jsr DrawCursor
 nf_r:       jmp MainLoop
 
@@ -516,15 +521,15 @@ sel_prog:   tya                 ; Field index
             clc                 ;   ,,
             adc VIEW_START      ;   plus start-of-view
             sec                 ;   ,,
-            sbc TopParamIX+6    ;   minus first page parameter...
+            sbc TopParamIX+4    ;   minus first page parameter...
             sta CURLIB_IX       ; ...Equals the new current program index
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
             jsr ShowPrgNum      ; ,,
-            lda #0              ; Change to an edit page
+            lda #0              ; Drill down to edit screen
             sta PAGE            ; ,,
-            jsr SwitchPage      ; And show it
+            jsr SwitchPage      ; ,,
             jmp MainLoop
 edit_name:  jsr ClrCursor       ; Clear cursor during name edit
             jsr FieldLoc        ; Get actual starting position of Name field
@@ -603,7 +608,7 @@ bsend_r:    jmp MainLoop
 ; Generate Program
 ; From two spefcified parent programs in the library
 Generate:   lda PAGE            ; Generate only works on edit screens
-            cmp #4              ; ,,
+            cmp #5              ; ,,
             bcs bsend_r         ; ,, (using bsend_r above for range reasons)
             ldy CURLIB_IX       ; First, make sure that the current library
             jsr Validate        ;   entry is either invalid, or lacks a
@@ -676,7 +681,7 @@ gen_r:      jmp MainLoop
 ; Set Program Number
 ; for current program buffer                    
 SetPrg:     lda PAGE            ; Set Program only works on edit screens
-            cmp #4              ; ,,
+            cmp #5              ; ,,
             bcs gen_r           ; ,, (using gen_r above for range reasons)
             jsr Popup
             lda #<PrgLabel
@@ -708,7 +713,7 @@ setp_r:     jsr SwitchPage      ; Housekeeping. Redraw the page.
 ; System Exclusive Voice Dump
 ; of program, bank, or group
 VoiceDump:  lda PAGE            ; Voice Dump only works on edit screens
-            cmp #4              ; ,,
+            cmp #5              ; ,,
             bcs dump_r2         ; ,,
             ldy CURLIB_IX       ; If this is not a valid program, cannot
             jsr Validate        ;   do dump
@@ -740,7 +745,7 @@ dump_r2:    jmp MainLoop
 
 ; Erase the current program      
 Erase:      lda PAGE            ; Erase only works on edit screens
-            cmp #4              ; ,,
+            cmp #5              ; ,,
             bcs erase_r2        ; ,,
             jsr Popup
             lda #<EraseConf
@@ -764,7 +769,7 @@ erase_r2:   jmp MainLoop
 ; Copy the current program
 ; to another location
 CopyLib:    lda PAGE            ; Copy only works on edit screens
-            cmp #4              ; ,,
+            cmp #5              ; ,,
             bcs erase_r2        ; Go to above MainLoop jump
 cpage_ok:   jsr Popup
             lda #<CopyLabel
@@ -931,9 +936,9 @@ AddRest:    lda SEQ_XPORT       ; Is the sequencer in record status?
 rest_r:     jmp MainLoop
 
 ; Go to Setup or Help Screen
-GoHelp:     lda #5
+GoHelp:     lda #6
             .byte $3c           ; Skip word (SKW)
-GoSetup:    lda #4
+GoSetup:    lda #5
             cmp PAGE
             beq setup_r
             sta PAGE
@@ -1012,7 +1017,7 @@ disk_canc:  jsr SwitchPage      ; Back to main
             
 ; Request Program
 Request:    lda PAGE            ; Set Program only works on edit screens
-            cmp #4              ; ,,
+            cmp #5              ; ,,
             bcs req_r1          ; ,, 
             ldy CURLIB_IX
             jsr SetLibPtr       ; Get pointer to sysex in library
@@ -1217,7 +1222,12 @@ page1:      sta FIELD_IX        ; ,,
 
 ; Populate Fields
 ; at PAGE        
-PopFields:  ldy CURLIB_IX       ; Get current library entry 
+PopFields:  lda PAGE            ; If on the Library View, recall the last
+            cmp #4              ;   index used
+            bne pf_prg          ;   ,,
+            lda LAST_LIB_IX     ;   ,,
+            sta FIELD_IX        ;   ,,
+pf_prg:     ldy CURLIB_IX       ; Get current library entry 
             iny                 ; Library entries are 1-indexed for display
             jsr TwoDigNum       ; Get the number
             dey                 ; Return library to 0-indexed
@@ -1233,7 +1243,7 @@ PopFields:  ldy CURLIB_IX       ; Get current library entry
             sta STATUSDISP-22   ;   so it's easier to read
             sta STATUSDISP-21   ;   ,,
             ldx PAGE
-            cpx #5              ; If Help page, do not populate any fields
+            cpx #6              ; If Help page, do not populate any fields
             bne params          ; ,,
             rts                 ; ,,
 params:     ldy TopParamIX,x
@@ -1550,7 +1560,26 @@ unshift:    lda #$5e            ; ,,
             rts
 stop_seq:   jsr StopSeq
             jmp Keypress
-            
+         
+; Library View Field Change
+; When a field is changed in Library View, it changes the current program            
+LibViewF:   lda PAGE            ; Are we on the Library View?
+            cmp #4              ; ,,
+            bne lvf_r           ; ,, return if not
+            lda FIELD_IX        ; Field index
+            sta LAST_LIB_IX     ;   ,, (Preserve last library index)
+            clc                 ;   ,,
+            adc VIEW_START      ;   plus start-of-view
+            sec                 ;   ,,
+            sbc TopParamIX+4    ;   minus first page parameter...
+            sta CURLIB_IX       ; ...Equals the new current program index
+            tay                 ; Select this library entry
+            jsr SelLib          ; ,,
+            ldy CURLIB_IX       ; Show program number
+            jsr ShowPrgNum      ; ,,
+            jsr PopFields       ; ,,
+lvf_r:      jmp MainLoop
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; I/O AND DATA SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2151,7 +2180,7 @@ ProgLine:   lda DRAW_IX         ; Where we are on the page
             clc                 ; Add the library view's offset
             adc VIEW_START      ; ,,
             sec                 ; Subtract the page's parameter offset
-            sbc TopParamIX+6    ; ,,
+            sbc TopParamIX+4    ; ,,
             sta VIEW_IX         ; Store in view index
             jsr Validate        ; Is it a valid program?
             beq pl_ok           ; ,,
@@ -2304,9 +2333,9 @@ XportAnn:   .asc $20, $51, $3e
 Init:       .asc "INIT",0
 
 ; Edit Page Data
-EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <Setup, <Help, <View
-EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >Setup, >Help, >View
-TopParamIX: .byte 0,      17,     30,     46,     60,     68   , 69
+EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <Setup, <Help
+EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >Setup, >Help
+TopParamIX: .byte 0,      17,     30,     46,     60,    76,     84
 
 ; Field data
 ; Field page number (0-3)
@@ -2314,9 +2343,9 @@ FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
             .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3
-            .byte 4,4,4,4,4,4,4,4
-            .byte 5
-            .byte 6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6
+            .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+            .byte 5,5,5,5,5,5,5,5
+            .byte 6
 LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
 ; Field row
@@ -2324,18 +2353,18 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,7,8,9,10,13,14,15,16
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
             .byte 1,2,3,4,7,8,9,10,11,12,13,14,15,16
+            .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 5,6,7,10,11,14,15,16
             .byte 0
-            .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
 
 ; Field column
 FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14  
             .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14
+            .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 14,14,14,14,14,14,14,14
             .byte 1
-            .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 
 ; Field type
 FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
@@ -2353,13 +2382,13 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_WHEEL,F_SWITCH,F_SWITCH,F_XVALUE
             .byte F_SWITCH,F_SWITCH,F_XVALUE,F_SWITCH
             
+            .byte F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG
+            .byte F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG
+
             .byte F_MIDICH,F_SWITCH,F_DEVICE,F_64,F_VALUE,F_64,F_64,F_MUTATIONS
             
             .byte F_NONE
             
-            .byte F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG
-            .byte F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG,F_PROG
-
 ; Field NRPN number
 FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,43,45,47,49,44,46,48,50
@@ -2367,9 +2396,9 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98,51
             ; These are not really NRPN numbers, but use the CURPRG storage
             ; for menu settings
-            .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7
-            .byte $ff
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff
+            .byte $ff
+            .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7
             .byte $ff
 
 ; Edit Page Fields
