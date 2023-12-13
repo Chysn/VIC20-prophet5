@@ -62,6 +62,8 @@ PROGNAME    = $0360             ; Unpacked program name ($0360-$0375)
 DRAW_IX     = $0376             ; Drawn field index
 VIEW_IX     = $0377             ; Field index in Library View
 LAST_LIB_IX = $0378             ; Last index in Library View
+UNDO_LEV    = $0379             ; Current undo level
+LAST_NRPN   = $037a             ; Last NRPN, used for keeping track of Undo
 
 DISKSETTING = $3e00             ; Memory for these settings on disk
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
@@ -77,6 +79,8 @@ SEQ_REC_IX  = CURPRG+$a8        ; Sequence record index
 ; Application Data Storage
 OUTSYSEX    = $1200             ; Outgoing sysex stage
 CURPRG      = $1300             ; Current program indexed buffer (128 bytes)
+UNDO_NRPN   = $1400             ; NRPN for undo level (64 bytes)
+UNDO_VAL    = $1440             ; Value for undo level (64 bytes)
 SEED1       = $1480             ; Seed 1 program for generator (128 bytes)
 SEED2       = $1500             ; Seed 2 program for generator (128 bytes)
 SEQUENCE    = $1580             ; Sequence note data (up to 64 steps)
@@ -172,6 +176,7 @@ RUN         = 24                ; RUN/STOP
 DSAVE       = 41                ; S 
 DLOAD       = 21                ; L
 PRGREQ      = 48                ; Q
+UNDO        = 33                ; Z
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -452,9 +457,10 @@ nf_r:       jmp MainLoop
 IncValue:   jsr PrepField       ; Get field value
             bcc id_r
             cmp TRangeH,y
-            beq id_r            ; Already at maximum, so do nothing
+            bcs id_r            ; Already at maximum, so do nothing
+            jsr NRPNpre         ; Pre-change (Undo)
             inc CURPRG,x
-nrpn_msg:   jsr NRPNOut         ; Send NRPN message, if specified
+nrpn_msg:   jsr NRPNpost        ; Send NRPN message, handle Undo
             ldy FIELD_IX
             jsr DrawField
             ldy FIELD_IX
@@ -487,6 +493,7 @@ DecValue:   jsr PrepField       ; Get field value
             bcc id_r
             cmp TRangeL,y
             beq id_r            ; Already at minimum, so do nothing
+            jsr NRPNpre         ; Pre-change (Undo)
             dec CURPRG,x
             jmp nrpn_msg
 
@@ -501,9 +508,14 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             beq edit_name       ; ,,
             cmp #F_PROG         ; If it's a program, it will be selected
             beq sel_prog        ; ,,
-            lda FNRPN,y         ; Anything else will advance to its max
-            tax                 ;   and then roll back to 0
-            lda FType,y         ;   ,,
+            tya                 ; Save Y for after undo level
+            pha                 ; ,,
+            ldx FNRPN,y         ; Pass NRPN number to NRPNpre to set undo
+            jsr NRPNpre         ;   ,,
+            pla                 ;   ,,
+            tay                 ;   ,,
+            ldx FNRPN,y         ; Anything else will advance to its max
+            lda FType,y         ;   and then roll back to 0
             tay                 ;   ,,
             lda CURPRG,x        ;   ,,
             cmp TRangeH,y       ;   ,,
@@ -512,8 +524,8 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             sta CURPRG,x        ;   ,,   and save that
             jmp val_ch          ;   ,,
 adv_f:      inc CURPRG,x        ;   ,,
-val_ch:     ldx FIELD_IX        ;   Send NRPN, if enabled
-            jsr NRPNOut         ;   ,,
+val_ch:     ldx FIELD_IX        ;   Send NRPN, if enabled, handle Undo
+            jsr NRPNpost        ;   ,,
             ldy FIELD_IX        ;   Draw the new field value
             jsr DrawField       ;   ,,
             jmp MainLoop        ;   ,,
@@ -1048,7 +1060,27 @@ req_c:      jsr Popup
 req_s:      jsr Status          ; ,,
 req_r2:     jsr SwitchPage      ; Redraw the page
             jmp MainLoop
-                        
+         
+; Undo
+; If undo level > 0, then get last NRPN and set it to its last value           
+Undo:       lda SHIFT           ; Commodore must be held for Undo
+            cmp #$02            ; ,,
+            bne undo_r          ; ,,
+            ldy UNDO_LEV        ; At least one level must be available
+            beq undo_r          ; ,,
+            lda UNDO_NRPN,y     ; Get the NRPN number for the level
+            pha                 ; ,, (store for DrawByNRPN, below)
+            tax                 ; ,, (store in X)
+            lda UNDO_VAL,y      ; Get the value for the level
+            sta CURPRG,x        ; Restore the program value
+            dec UNDO_LEV        ; Go to the next level
+            lda #$ff            ; Reset the last NRPN number
+            sta LAST_NRPN       ; ,,
+            jsr NRPNpost        ; Transmit NRPN CCs, if enabled (passing X)
+            pla
+            jsr DrawByNRPN      ; ,,
+undo_r:     jmp MainLoop          
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1288,6 +1320,20 @@ ClrCursor:  ldy FIELD_IX        ; Remove the previous cursor
             ldx #0
             sta (FIELD,x)
             rts
+   
+; Draw Field by NRPN
+; With NRPN supplied in A, if it's on the same edit page        
+DrawByNRPN: ldy #0
+-loop:      cmp FNRPN,y
+            beq nrpn_found
+            iny
+            cpy #(LFIELD-FPage)
+            bne loop
+d_nrpn_r:   rts
+nrpn_found: lda PAGE
+            cmp FPage,y
+            bne d_nrpn_r
+            ; Fall through to DrawField
             
 ; Draw Field
 ; at index Y
@@ -1301,7 +1347,7 @@ DrawField:  jsr FieldLoc        ; Set the field's physical screen location
             lda FNRPN,y         ; Get this field's NRPN, which is also the
             tay                 ;   index within the program data
             lda CURPRG,y        ;   and put the current value in A
-            rts                 ; Pull the draw address off the stack, dispatch
+draw_r:     rts                 ; Pull the draw address off the stack, dispatch
          
 ; Set Field Location   
 ; Field index is in Y  
@@ -1578,7 +1624,7 @@ LibViewF:   lda PAGE            ; Are we on the Library View?
             ldy CURLIB_IX       ; Show program number
             jsr ShowPrgNum      ; ,,
             jsr PopFields       ; ,,
-lvf_r:      jmp MainLoop
+lvf_r:      rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; I/O AND DATA SUBROUTINES
@@ -1763,9 +1809,17 @@ send_r:     clc
 SelLib:     jsr Validate
             beq lib_good
             jsr NewLib
-lib_good:   lda PTR
-            ldy PTR+1
-            jmp UnpBuff
+lib_good:   ldy #$80            ; When a new program is selected, clear
+            lda #0              ;   the Undo buffer
+            sta UNDO_LEV        ;   ,, and reset the undo level
+-loop:      sta UNDO_NRPN,y     ;   ,,
+            dey                 ;   ,,
+            bpl loop            ;   ,,
+            lda #$ff            ; Set last NRPN to unset
+            sta LAST_NRPN       ; ,,
+            lda PTR             ; Unpack the library into the edit
+            ldy PTR+1           ;   buffer
+            jmp UnpBuff         ;   ,,
             
 ; Set Library Pointer
 ; to entry index in Y
@@ -1844,12 +1898,38 @@ Rand127:    lda #%00000010      ; 7-bit
             lda RANDOM
             rts
 
+; Pre NRPN Change
+; Manage undo levels    
+; NRPN index is in X
+NRPNpre:    cpx LAST_NRPN       ; If the last field has changed again,
+            beq pre_r           ;   do nothing
+            stx LAST_NRPN       ; Store the last NRPN
+            ldy UNDO_LEV        ; If there are undo levels remaining,
+            cpy #64             ; ,,
+            bcc save_lev        ; ,, save a new level
+            ldy #63             ; If the level is at 64, then move
+-loop:      lda UNDO_NRPN,y     ;   the current levels down one,
+            sta UNDO_NRPN-1,y   ;   resulting in the loss of the
+            lda UNDO_VAL,y      ;   oldest undo level
+            sta UNDO_VAL-1,y    ;   ,,
+            dey                 ;   ,,
+            bne loop            ;   ,,
+            ldy #63             ; Set index back to 63 for next instruction
+save_lev:   iny                 ; Move level pointer
+            sty UNDO_LEV        ; ,,              
+            lda CURPRG,x        ; Get pre-change value
+            sta UNDO_VAL,y      ; Store it in UNDO value list
+            txa                 ; ,,
+            sta UNDO_NRPN,y     ; Store NRPN number in value list
+pre_r:      rts            
+                        
+; Post NRPN Change
 ; Send NRPN, if enabled
 ; NRPN index is in X
-NRPNOut:    lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
-            beq nrpn_r          ; ,,
+NRPNpost:   lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
+            beq post_r          ; ,,
             cpx #$90            ; If this is one of the settings
-            bcs nrpn_r          ;   parameters for Ed, do not send to P5
+            bcs post_r          ;   parameters for Ed, do not send to P5
             stx IX              ; Temporarily store the NRPN number in IX
             ldy MIDI_CH         ; Get MIDI channel
             dey                 ; ,, zero-index it
@@ -1875,7 +1955,7 @@ NRPNOut:    lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
             lda CURPRG,x        ; Get the value
             and #$7f            ; Constrain for CC
             jsr MIDIOUT         ; ,,
-nrpn_r:     rts
+post_r:     rts
 
 ; Play Next Note
 ; and set the countdown timer for the IRQ
@@ -2281,19 +2361,19 @@ Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,SEND2BUFF,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
             .byte VOICEDUMP,CLEAR,COPY,RUN,REST,BACKSP,DSAVE,DLOAD
-            .byte PRGREQ,0
+            .byte PRGREQ,UNDO,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <BufferSend-1,<EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceDump-1
             .byte <Erase-1,<CopyLib-1,<Sequencer-1,<AddRest-1,<DelNote-1
-            .byte <GoSave-1,<GoLoad-1,<Request-1
+            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >BufferSend-1,>EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceDump-1
             .byte >Erase-1,>CopyLib-1,>Sequencer-1,>AddRest+1,>DelNote-1
-            .byte >GoSave-1,>GoLoad-1,>Request-1
+            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Ext Value, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
