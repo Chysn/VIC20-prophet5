@@ -311,7 +311,7 @@ waitkey:    ldx READY           ; If Sysex is ready, handle it
             sta KEYBUFF         ; Store pressed key to avoid race conditions
             cmp #$40            ; If no key down, wait
             bne keydown         ; ,,
-            ldx #$40            ; Reset key repeat rate
+            ldx #$30            ; Reset key repeat rate
             stx REPEAT          ; ,,
             bne waitkey
 keydown:    tay                 ; Preserve key pressed
@@ -481,7 +481,7 @@ no_deb:     ldx REPEAT
             dex 
             bpl loop
             lda REPEAT
-            cmp #$08
+            cmp #$07
             bcc topspeed
             dec REPEAT
             dec REPEAT
@@ -1903,6 +1903,8 @@ Rand127:    lda #%00000010      ; 7-bit
 ; NRPN index is in X
 NRPNpre:    cpx LAST_NRPN       ; If the last field has changed again,
             beq pre_r           ;   do nothing
+            cpx #$90            ; If this is one of the settings parameters
+            bcs pre_r           ;   for Ed, do not create an Undo level
             stx LAST_NRPN       ; Store the last NRPN
             ldy UNDO_LEV        ; If there are undo levels remaining,
             cpy #64             ; ,,
