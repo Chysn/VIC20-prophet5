@@ -1,0 +1,6 @@
+#!/bin/bash
+
+minipro -p AM28C64B@DIP28 -w ./vic/p5ed.eep
+
+#minipro -p AT28C64B -w ./vic/p5ed.eep
+
