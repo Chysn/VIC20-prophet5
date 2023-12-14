@@ -16,11 +16,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CARTRIDGE LAUNCHER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-* = $6000
+* = $a000
 Vectors:    .word Start         ; Start
             .word NMISR         ; NMI Address
             .byte $41,$30,$c3,$c2,$cd  ; Uncomment for production
-           ; .byte $ff,$ff,$ff,$ff,$ff  ; Uncomment for development
+            ;.byte $ff,$ff,$ff,$ff,$ff  ; Uncomment for development
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; LABEL DEFINITIONS
@@ -38,12 +38,13 @@ SYIN        = $02               ; Sysex In pointer (2 bytes)
 SYIN_IX     = $04               ; Sysex In position index
 PTR         = $05               ; Library pointer (2 bytes)
 PTRD        = $07               ; Destination pointer (2 bytes)
+PAGE        = $0e               ; Current page number
+CURLIB_IX   = $0f               ; Current library index
 LISTEN      = $a0               ; Sysex listen flag (jiffy clock not used)
 READY       = $a1               ; Sysex ready flag (jiffy clock not used)
 ANYWHERE    = $a2               ; Temporary iterator (jiffy click not used)
 TAB         = $c1               ; Save start pointer (2 bytes)
 
-PAGE        = $033c             ; Current page number
 VIEW_START  = $033d             ; Library view start entry
 FIELD_IX    = $033e             ; Current field index
 REPEAT      = $0341             ; Repeat speed
@@ -51,7 +52,6 @@ KEYBUFF     = $0342             ; Last key pressed
 IX          = $0343             ; General use index
 PRGLOC      = $0344             ; Program location screen codes (3 bytes)
 TGTLIB_IX   = $0347             ; Target library index
-CURLIB_IX   = $0348             ; Current in-use library index
 P_RAND      = $0349             ; Random number seed (2 bytes)
 S_GROUP     = $034b             ; Group search
 S_BANK      = $034c             ; Bank search
@@ -146,7 +146,6 @@ P_BR        = 203               ;                bottom right
 UP          = 145               ; Cursor up
 RVON        = 18                ; Reverse on
 RVOF        = 146               ;         off
-ARROW       = 94                ; Up arrow
 
 ; Display Constants
 SCREEN      = $1000             ; Screen character memory (expanded)
@@ -179,7 +178,7 @@ OPENHELP    = 43                ; H
 GENERATE    = 19                ; G
 SETPRG      = 13                ; P
 CLEAR       = 62                ; CLR
-VOICESEND   = 54                ; Up Arrow
+VOICESEND   = 27                ; V
 COPY        = 34                ; C
 REST        = 10                ; R
 RUN         = 24                ; RUN/STOP
@@ -365,7 +364,7 @@ SysexReady: lda #0              ; Clear the sysex ready flag
             jsr UnpBuff         ;   ,,
             jsr PopFields       ;   ,,            
 lib_end:    jmp MainLoop
-SysexFail:  lda #$83            ; This has failed, so make it an unset program,
+SysexFail:  lda #$80            ; This has failed, so make it an unset program,
             ldy #4              ;   so that it's not accidentally seen as
             sta (PTR),y         ;   an actual program by some routines/
             ldx #SM_FAIL
@@ -504,6 +503,8 @@ nrpn_msg:   jsr NRPNpost        ; Send NRPN message, handle Undo
             beq no_deb          ;   ,,
             cmp #F_FREQ         ;   ,,
             beq no_deb          ;   ,,
+            cmp #F_TEMPO        ;   ,,
+            beq no_deb          ;   ,,
             cmp #F_64           ;   ,,
             beq no_deb          ;   ,,
 id_r:       jmp MainLoop
@@ -556,15 +557,17 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             lda CURPRG,x        ;   ,,
             cmp TRangeH,y       ;   ,,
             bcc adv_f           ;   ,,
-            lda TRangeL,y       ;   ,, If above high range, set to low
-            sta CURPRG,x        ;   ,,   and save that
+            cpy #F_VALUE        ; If this is a value type, do not roll back      
+            beq edna_r          ;   after passing the high range; do nothing
+            lda TRangeL,y       ; If above high range, set to low
+            sta CURPRG,x        ;   and save that
             jmp val_ch          ;   ,,
 adv_f:      inc CURPRG,x        ;   ,,
 val_ch:     ldx FIELD_IX        ;   Send NRPN, if enabled, handle Undo
             jsr NRPNpost        ;   ,,
             ldy FIELD_IX        ;   Draw the new field value
             jsr DrawField       ;   ,,
-            jmp MainLoop        ;   ,,
+edna_r:     jmp MainLoop        ;   ,,
 sel_prog:   tya                 ; Field index
             clc                 ;   ,,
             adc VIEW_START      ;   plus start-of-view
@@ -706,12 +709,17 @@ SetPrg:     jsr Popup
             lda PTR             ; Unpack buffer prior to program # change
             ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
+            lda PRGLOC          ; Is the program name already set?
+            cmp #"-"            ;   ,,
+            beq is_unset        ;   ,, if not, start at beginning
             ldy #2              ; Set up editor with current program
 -loop:      lda PRGLOC,y        ; ,,
             sta WINDOW_ED,y     ; ,,
             dey                 ; ,,
-            bpl loop            ; ,,    
-            ldy #3              ; Cursor position in edit field        
+            bpl loop            ; ,, 
+            ldy #3              ; ,,
+            .byte $3c           ; Skip word (SKW)
+is_unset:   ldy #0              ; Cursor position in edit field        
             jsr SetPrgNum       ; Get program number from user
             bcs setp_r          ; Return if cancel or error
             ldy #4              ; Get the user input from PTRD and update the
@@ -808,7 +816,7 @@ cch_bk:     cpy #BACKSP         ; Backspace
             inc IX              ; Increment the index and redraw the cursor
             ldy IX              ; ,,
             jmp cpos_cur        ; ,,
-ones:       ldx "9"+1           ; By default, maximum is 9
+ones:       ldx #"9"+1          ; By default, maximum is 9
             stx DEST1           ;   Use DEST1 to temporarily store the maximum
             ldx DEST10          ;   ,,
             cpx #"6"            ;   ,, If tens is 6, change max to 4
@@ -867,7 +875,7 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             dey                 ; ,,
             cpy #$ff            ; ,,
             bne loop            ; ,,
-            lda #$83            ; Set the copy's program number as unset
+            lda #$80            ; Set the copy's program number as unset
             ldy #4              ; ,,
             sta (PTRD),y        ; ,,
             ldx #SM_COPIED      ; Indicate copy success
@@ -1160,7 +1168,7 @@ SetPrgNum:  sty IX              ; ,, Set current cursor position
 pgetkey:    jsr Keypress        ; Keycode in Y, PETSCII in A
             cpy #CANCEL         ; Cancel
             bne pch_bk          ; ,,
-            jmp pn_inval        ; ,,
+            jmp setprg_r        ; ,,
 pch_bk:     cpy #BACKSP         ; Has backspace been pressed?
             beq pbacksp          ; ,,
             cpy #EDIT           ; Has return been pressed?
@@ -1196,16 +1204,12 @@ pbacksp:    ldy IX
 pdone:      ldy IX              ; If edit isn't complete, then do nothing
             cpy #3              ; ,,
             bne pgetkey         ; ,,
-            lda PRGLOC          ; First character
-            cmp #"-"            ;   If it's still "-" then it's invalid
-            beq pn_inval        ;   ,,
+            lda PRGLOC          ; Get the input numeral
             sec                 ; Subtract 1, because group is zero-indexed
             sbc #1              ; ,,
             and #$07            ; Constrain to actual group number
             sta PTRD            ; Store in destination location
             lda PRGLOC+1        ; Here's the bank number
-            cmp #"-"            ; Again, if it's "-" then invalid
-            beq pn_inval        ; ,,
             sec                 ; Subtract 1, because bank is zero-indexed
             sbc #1              ; ,,
             and #$07            ; Constrain to a bank number
@@ -1214,8 +1218,6 @@ pdone:      ldy IX              ; If edit isn't complete, then do nothing
             asl                 ;   ,,
             sta IX              ;   and store it temporarily
             lda PRGLOC+2        ; Now the program number 
-            cmp #"-"            ; You know the drill...
-            beq pn_inval        ; ,,
             sec                 ; Same stuff as above, yadda yadda yadda
             sbc #1              ; ,,
             and #$07            ; ,,
@@ -1223,7 +1225,7 @@ pdone:      ldy IX              ; If edit isn't complete, then do nothing
             ldy #5              ; Store in the destination location
             sta PTRD+1          ;   and that's it!
             clc                 ; Clear carry to indicate everything's good
-pn_inval:   rts                 ; Return with carry set if invalid
+setprg_r:   rts                 ; Return with carry set if invalid
 
 ; Prepare Field
 ; for increment or decrement
@@ -1821,7 +1823,7 @@ PackLib:    jsr Validate        ; Validate the existing library entry, which
             sta (PTR),y         ;   $80, which indicates that no group is
             dey                 ;   set.
             bpl loop            ;   ,,
-            lda #$81            ;   ,,
+            lda #$80            ;   ,,
             ldy #4              ;   ,,
             sta (PTR),y         ;   ,,
             lda #$00            ;   ,,
@@ -1951,7 +1953,7 @@ NewLib:     ldy #$9f
             ldy #$9e            ; ,,
             lda #ST_ENDSYSEX    ; Create the end-of-sysex delimiter
             sta (PTR),y         ; ,,
-            lda #$82            ; For a new library entry, set the program
+            lda #$80            ; For a new library entry, set the program
             ldy #4              ;   number to unset
             sta (PTR),y         ;   ,,
             rts
@@ -2435,7 +2437,16 @@ sh_nc1:     ldx #10             ; Reset line counter to 10 values
 same_line:  iny
             cpy #$9f 
             bne loop
-            rts 
+            ldy #4              ; If this program has an unset program number,
+            lda (PTR),y         ;   show question marks instead of the
+            bpl showh_r         ;   group number and program number bytes
+            lda #$3f            ;   ,,
+            sta SCREEN+97       ;   ,,
+            sta SCREEN+98       ;   ,,
+            lda #$3f+$80        ;   ,,
+            sta SCREEN+99       ;   ,,
+            sta SCREEN+100      ;   ,,
+showh_r:    rts 
 
 ; Show Tempo in BPM        
 BPM:        sta ANYWHERE
@@ -2614,7 +2625,7 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     31,     47,     63,    77,       78,     86
+TopParamIX: .byte 0,      17,     31,     47,     61,    77,       78,     86
 
 ; Field data
 ; Field page number (0-3)
@@ -2783,19 +2794,19 @@ Help:       .asc CR
             .asc 5," SPACE",30," SETUP PAGE",CR
             .asc 5," F1-F7",30," EDIT PAGE",CR
             .asc 5," ",RVON,"C=",RVOF,"FN ",30," LIBRARY VIEW",CR
-            .asc 5," CRSR ",30," PARAMETER",CR
+            .asc 5," CRSR ",30," SELECT PARAM",CR
             .asc 5," < >  ",30," EDIT VALUE",CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
-            .asc 5," - +  ",30," LIBRARY SELECT",CR
-            .asc 5," ",ARROW,"....",30," SEND VOICE(S)",CR
-            .asc 5," Q....",30," REQUEST VOICE",CR
-            .asc 5," X....",30," HEX VIEW",CR
-            .asc 5," G....",30," GENERATE PROG",CR
-            .asc 5," P....",30," SET PROG #",CR
+            .asc 5," - +  ",30," BROWSE LIBRARY",CR
             .asc 5," CLR  ",30," ERASE PROG",CR
+            .asc 5," P....",30," SET PROG #",CR
             .asc 5," C....",30," COPY PROG",CR
-            .asc 5," L....",30," DISK LOAD",CR
-            .asc 5," S....",30," DISK SAVE",CR
+            .asc 5," V....",30," SEND DATA",CR
+            .asc 5," Q....",30," REQUEST DATA",CR
+            .asc 5," G....",30," GENERATE PROG",CR
+            .asc 5," L....",30," LOAD LIBRARY",CR
+            .asc 5," S....",30," SAVE LIBRARY",CR
+            .asc 5," X....",30," HEX VIEW",CR
             .asc 5," RUN  ",30," PLAY/STOP",CR
             .asc 5," ",RVON,"C=",RVOF,"RUN",30," RECORD",CR,CR
             .asc 158," WWW.BEIGEMAZE.COM/ED",30
@@ -2830,11 +2841,11 @@ PrgLabel:   .asc 5,"PROGRAM #",30,0
 ReqLabel:   .asc 5,"REQUEST #",30,0
 SaveLabel:  .asc 5,"DISK SAVE",30,0
 LoadLabel:  .asc 5,"DISK LOAD",30,0
-SendMenu:   .asc 5,"SEND VOICE",CR
+SendMenu:   .asc 5,"SEND DATA",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROG"," ",RVON,"E",RVOF,"DIT",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
             .asc 30,0
-SendMenu2:  .asc 5,"SEND VOICE",CR,CR
+SendMenu2:  .asc 5,"SEND DATA",CR,CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"E",RVOF,"DIT BUFF"
             .asc 30,0
             
