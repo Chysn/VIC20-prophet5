@@ -2164,7 +2164,7 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             pha                 ;   ,,
             jsr CHKMIDI         ; Is this a MIDI-based interrupt?
             bne midi            ;   If so, handle MIDI input
-            jmp SYSNMI          ; Back to normal NMI, after register saves
+            jmp RFI             ; Back to normal NMI, after register saves
 midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
