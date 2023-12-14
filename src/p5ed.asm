@@ -39,8 +39,9 @@ SYIN_IX     = $04               ; Sysex In position index
 PTR         = $05               ; Library pointer (2 bytes)
 PTRD        = $07               ; Destination pointer (2 bytes)
 LISTEN      = $a0               ; Sysex listen flag (jiffy clock not used)
-READY       = $a1               ; Sysex ready flag (jiffy clock note used)
-ANYWHERE    = $a2               ; Temporary iterator storage
+READY       = $a1               ; Sysex ready flag (jiffy clock not used)
+ANYWHERE    = $a2               ; Temporary iterator (jiffy click not used)
+TAB         = $c1               ; Save start pointer (2 bytes)
 
 PAGE        = $033c             ; Current page number
 VIEW_START  = $033d             ; Library view start entry
@@ -207,6 +208,7 @@ F_NONE      = 14                ; Blank field
 F_MUTATIONS = 15                ; Number of mutations
 F_HEX       = 16                ; Full-page hex view
 F_TEMPO     = 17                ; Tempo in BPM
+F_QCOMP     = 18                ; Q Compensation
 
 ; System Resources
 CINV        = $0314             ; ISR vector
@@ -612,8 +614,6 @@ backsp:     ldy IX              ; Backspace
 entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
             lda #" "            ; ,,
             sta (FIELD),y       ; ,,
-            lda #0              ; Always make sure that this last name location
-            sta CURPRG+85       ;   is a 0
             jsr DrawCursor      ; Replace removed field-level cursor
             jmp MainLoop        ; And go back to Main
 find_end:   ldy #0              ; Starting NRPN index of Name
@@ -627,8 +627,7 @@ fc_r:       sty IX              ;   ,,
 
 ; Generate Program
 ; From two spefcified parent programs in the library
-Generate:   jsr CheckPage       ; Is this allowed?
-            ldy CURLIB_IX       ; First, make sure that the current library
+Generate:   ldy CURLIB_IX       ; First, make sure that the current library
             jsr Validate        ;   entry is either invalid, or lacks a
             bne gen_ok          ;   program number. We don't want to overwrite
             ldy #4              ;   something that's already in the library.
@@ -698,8 +697,7 @@ gen_r:      jmp MainLoop
              
 ; Set Program Number
 ; for current program buffer                    
-SetPrg:     jsr CheckPage       ; Is this allowed?
-            jsr Popup
+SetPrg:     jsr Popup
             lda #<PrgLabel
             ldy #>PrgLabel
             jsr PrintStr
@@ -728,8 +726,7 @@ setp_r:     jsr SwitchPage      ; Housekeeping. Redraw the page.
             
 ; System Exclusive Voice Dump
 ; of program, bank, or group
-VoiceSend:  jsr CheckPage       ; Is this allowed?
-            ldy CURLIB_IX       ; If this is not a valid program, cannot
+VoiceSend:  ldy CURLIB_IX       ; If this is not a valid program, cannot
             jsr Validate        ;   do dump
             bne dump_r          ;   ,,
             jsr Popup           ; Put the dump selection menu 
@@ -763,8 +760,7 @@ dump_r:     ldx #SM_BLANK       ; No dump done, clear status
 dump_r2:    jmp MainLoop
 
 ; Erase the current program      
-Erase:      jsr CheckPage       ; Is this allowed?
-            jsr Popup
+Erase:      jsr Popup
             lda #<EraseConf
             ldy #>EraseConf
             jsr PrintStr
@@ -785,8 +781,7 @@ erase_r2:   jmp MainLoop
 
 ; Copy the current program
 ; to another location
-CopyLib:    jsr CheckPage       ; Is this allowed?
-cpage_ok:   jsr Popup
+CopyLib:    jsr Popup
             lda #<CopyLabel
             ldy #>CopyLabel
             jsr PrintStr
@@ -885,6 +880,10 @@ copy_r:     jsr SwitchPage
 Sequencer:  ldx SEQ_LAST        ; Turn off last note whenever a transport
             ldy #0              ;   control is activated
             jsr NOTEOFF         ;   ,,
+            lda MIDI_CH         ; Set MIDI channel
+            sec                 ; ,,
+            sbc #1              ; ,,
+            jsr SETCH           ; ,,
             lda SEQ_XPORT       ; Is transport currently on?
             beq start           ;   If not, start the sequencer
             lda #0              ; Stop the sequencer
@@ -900,10 +899,6 @@ start:      lda SHIFT           ; Is Commodore key held down?
             jmp annunciate      ; ,,
 startplay:  lda #$02            ; Turn on the record playback bit
             sta SEQ_XPORT       ; ,,
-            lda MIDI_CH         ; Set MIDI channel
-            sec                 ; ,,
-            sbc #1              ; ,,
-            jsr SETCH           ; ,,
             ldx #$ff            ; Reset the play index
             stx SEQ_PLAY_IX     ; ,,
             jsr PlayNote        ; Play the first note
@@ -963,27 +958,27 @@ GoHelp:     lda #7
 setup_r:    jmp MainLoop
 
 ; Disk Save
-GoSave:     jsr StopSeq
-            jsr Popup
+GoSave:     jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            ldy #$10
--loop:      lda CURPRG+$a0,y    ; Get setting memory
-            sta DISKSETTING,y   ; Store it in the disk save area
-            dey                 ; ,,
-            bpl loop            ; ,,
             jsr SetName         ; SetName calls SETNAM
             bcs disk_canc       ; Cancel, so return
+            jsr StopSeq         ; Stop sequence if name OK
+            ldy #$10            ; Move settings to saved area
+-loop:      lda CURPRG+$a0,y    ; ,,
+            sta DISKSETTING,y   ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
             ldx DEVICE_NUM      ; Device number
             ldy #0              ; Command (none)
             jsr SETLFS          ; ,,                  
             ldx #SM_SAVING      ; Show "SAVING..."
             jsr Status          ; ,,
             lda #<SEQUENCE      ; Set up KERNAL SAVE
-            sta $c1             ; ,,
+            sta TAB             ; ,,
             lda #>SEQUENCE      ; ,,
-            sta $c2             ; ,,
+            sta TAB+1           ; ,,
             ldx #$10            ; ,, (top of save, low)
             ldy #$3e            ; ,, (top of save, high)
             lda #$c1            ; ,, (location of start)
@@ -998,13 +993,13 @@ disk_error: ldx #SM_FAIL
             jmp MainLoop
 
 ; Disk Load
-GoLoad:     jsr StopSeq
-            jsr Popup
+GoLoad:     jsr Popup
             lda #<LoadLabel
             ldy #>LoadLabel
             jsr PrintStr    
             jsr SetName         ; SetName calls SETNAM
             bcs disk_canc       ; Cancel, so return
+            jsr StopSeq         ; Stop sequence if name OK            
             ldx DEVICE_NUM      ; Device number
             ldy #1              ; Load to header location
             jsr SETLFS          ; ,,
@@ -1033,8 +1028,8 @@ disk_canc:  jsr SwitchPage      ; Back to main
             jmp MainLoop        ; ,,
             
 ; Request Program
-Request:    jsr CheckPage       ; Is this allowed?
-            ldy CURLIB_IX
+Request:    ldy CURLIB_IX
+            sty TGTLIB_IX       ; Want the requested program to go HERE
             jsr SetLibPtr       ; Get pointer to sysex in library
             ldy #4              ; Cannot use the request for a library entry
             lda (PTR),y         ;   that already contains a program
@@ -1093,21 +1088,6 @@ undo_r:     jmp MainLoop
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Check Page
-; Returns to MainLoop if this is the Help Page or Setup Page
-; Generally, CheckPage is used with commands that draw popup windows, the idea
-; being that the user should have a direct view of data before taking an action
-; on one of these pages.
-CheckPage:  lda PAGE            ; What page?
-            cmp #6              ; Is it Help or Setup
-            bcs nope            ; ,,
-            rts                 ; ,, If not, return
-nope:       pla                 ; Pull the return address from CheckPage off
-            pla                 ;   the stack and jump back to the main loop
-            ldx #SM_UNAVAIL     ; Indicate the operation is not available
-            jsr Status          ; ,,
-            jmp MainLoop
-            
 ; Filename Field
 ; If canceled, return with carry set
 ; If OK, return with carry clear and call SETNAM
@@ -1645,6 +1625,7 @@ LibViewF:   lda PAGE            ; Are we on the Library View?
             sec                 ;   ,,
             sbc TopParamIX+4    ;   minus first page parameter...
             sta CURLIB_IX       ; ...Equals the new current program index
+            sta TGTLIB_IX       ; ...and the target program index
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
@@ -2297,7 +2278,17 @@ Name:       ldy #21
             jmp WriteText
             
 ; Draw Enum Field - Retrigger
-Retrigger:  cmp #3
+Retrigger:  cmp #5
+            bne r_ch_4
+            lda #<HIR
+            ldy #>HIR
+            jmp WriteText
+r_ch_4:     cmp #4
+            bne r_ch_3
+            lda #<HI
+            ldy #>HI
+            jmp WriteText
+r_ch_3:     cmp #3
             bne r_ch_2
             lda #<LAR
             ldy #>LAR
@@ -2426,8 +2417,10 @@ prli_r:     rts
 
 ; Show Hex
 ; For selected program voice sysex
-ShowHex:    ldy CURLIB_IX
-            jsr SetLibPtr
+ShowHex:    ldy CURLIB_IX       ; Pack voice to sysex are before showing
+            jsr PackLib         ; ,,
+            ldy CURLIB_IX       ; Set library pointer
+            jsr SetLibPtr       ; ,,
             ldy #0
             ldx #10             ; X counts values to form a line
 -loop:      lda (PTR),y
@@ -2493,6 +2486,34 @@ from_shift: pla                 ; Put the two-digit remainder back in A
             sta (FIELD),y       ; ,,
             rts
             
+; Show QComp
+; And also set it, because it has this weird property in which it uses the
+; high nybble for its value
+QComp:      lsr                 ; If incremented, there will be a value like $81
+            php                 ;   ,,
+            lsr                 ;   and if decremented, like $7f. This operation
+            lsr                 ;   captures the high nybble in A, and the
+            lsr                 ;   direction in Carry, with Carry Set=decrement
+            bcs q_dec           ;   Skip any adjustment of high nybble value
+            plp                 ; Get carry after first LSR
+            adc #0              ; ,,
+            jmp q_disp          ; Display the Q Comp parameter value
+q_dec:      plp                 ; Discard first processor status
+q_disp:     clc                 ; Add one for display (value is 1-indexed)
+            adc #1              ; ,,
+            ora #$30            ; Convert to screen code and write to the field
+            sbc #0              ; Un-1-index for storage
+            ldy #0              ; ,,
+            sta (FIELD),y       ; ,,
+            asl                 ; Shift to high nybble to become the ACTUAL 
+            asl                 ;   stored value. This shifts away the $30
+            asl                 ;   of the screen code 
+            asl                 ;   ,,
+            ldy FIELD_IX        ; Store the weird value in the program buffer
+            ldx FNRPN,y         ; Get the NRPN index
+            sta CURPRG,x        ; Store the value
+            rts
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; DATA TABLES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2509,13 +2530,10 @@ Saving:     .asc "    SAVING",0
 Loading:    .asc "   LOADING",0
 Success:    .asc "   SUCCESS",0
 Undone:     .asc "   UNDO 00",0
-NotAvail:   .asc "WRONG PAGE",0
 StatusL:    .byte <Failed,<Received,<Sent,<NotEmpty,<Welcome,<Generated
             .byte <ClrStatus,<Copied,<Saving,<Loading,<Success,<Undone
-            .byte <NotAvail
 StatusH:    .byte >Failed,>Received,>Sent,>NotEmpty,>Welcome,>Generated
             .byte >ClrStatus,>Copied,>Saving,>Loading,>Success,>Undone
-            .byte >NotAvail
 
 ; MIDI Messages and Headers
 EditBuffer: .byte $f0, $01, $32, $03, $ff
@@ -2553,17 +2571,19 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
-; 7=Name, 8=Unison Voice Count, 9=Unison Retrigger, 10=Frequency
+; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
-; 17=Tempo
+; 17=Tempo, 18=Q Comp
 TSubL:      .byte <ValBar-1,<PrgLine-1,<Switch-1,<Track-1
             .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
             .byte <Num-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
+            .byte <QComp-1
 TSubH:      .byte >ValBar-1,>PrgLine-1,>Switch-1,>Track-1
             .byte >Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1,>Freq-1
             .byte >Num-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0 , 1, 8, 1,0, 0,0,16
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 3,96,16,11,64,0,10,0,80
+            .byte >QComp-1
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0 , 1, 8, 1,0, 0,0,16,0
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,96,16,11,64,0,10,0,80,112
 
 ; Enum field values
 NoTrack:    .asc "NONE",0
@@ -2575,6 +2595,8 @@ LO:         .asc "LO ",0
 LOR:        .asc "LOR",0
 LAS:        .asc "LAS",0
 LAR:        .asc "LAR",0
+HI:         .asc "HI ",0
+HIR:        .asc "HIR",0
 
 ; Note Name Tables
 ; Flats are constructed of two screen code characters, Commodre-M and
@@ -2592,12 +2614,12 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     30,     46,     60,    76,       77,     85
+TopParamIX: .byte 0,      17,     31,     47,     63,    77,       78,     86
 
 ; Field data
 ; Field page number (0-3)
 FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 1,1,1,1,1,1,1,1,1,1,1,1,1
+            .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
             .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
@@ -2608,7 +2630,7 @@ LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
 ; Field row
 FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
-            .byte 1,2,3,4,5,7,8,9,10,13,14,15,16
+            .byte 1,2,3,4,5,6,8,9,10,11,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
             .byte 1,2,3,4,7,8,9,10,11,12,13,14,15,16
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
@@ -2618,7 +2640,7 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
 
 ; Field column
 FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
-            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14  
+            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14 
             .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
@@ -2631,8 +2653,9 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_VALUE,F_VALUE,F_VALUE
             
-            .byte F_VALUE,F_VALUE,F_VALUE,F_TRACK,F_FILTER,F_VALUE,F_VALUE
-            .byte F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE
+            .byte F_VALUE,F_VALUE,F_VALUE,F_TRACK,F_FILTER,F_QCOMP
+            .byte F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE
+            .byte F_VALUE
             
             .byte F_VALUE,F_VALUE,F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_VALUE
             .byte F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_SWITCH,F_SWITCH
@@ -2654,7 +2677,7 @@ TEMPO_FLD:  .byte F_TEMPO,F_64,F_64,F_MUTATIONS
             
 ; Field NRPN number
 FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
-            .byte 17,18,40,19,20,43,45,47,49,44,46,48,50
+            .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98,51
             ; These are not really NRPN numbers, but use the CURPRG storage
@@ -2691,6 +2714,7 @@ Edit1:      .asc 30,CR,"FILTER",CR
             .asc RT,"ENV AMOUNT",CR
             .asc RT,"KEYBOARD",CR
             .asc RT,"REV",CR
+            .asc RT,"Q COMP",CR
             .asc CR,RT,"ATTACK",CR
             .asc RT,"DECAY",CR
             .asc RT,"SUSTAIN",CR
