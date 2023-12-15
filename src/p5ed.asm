@@ -16,7 +16,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CARTRIDGE LAUNCHER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-* = $a000
+* = $6000
 Vectors:    .word Start         ; Start
             .word NMISR         ; NMI Address
             .byte $41,$30,$c3,$c2,$cd  ; Uncomment for production
@@ -47,11 +47,13 @@ TAB         = $c1               ; Save start pointer (2 bytes)
 
 VIEW_START  = $033d             ; Library view start entry
 FIELD_IX    = $033e             ; Current field index
+MERGE       = $033f             ; Merge flag
 REPEAT      = $0341             ; Repeat speed
 KEYBUFF     = $0342             ; Last key pressed
 IX          = $0343             ; General use index
 PRGLOC      = $0344             ; Program location screen codes (3 bytes)
 TGTLIB_IX   = $0347             ; Target library index
+DISKLIB_IX  = $0348             ; Disk library index
 P_RAND      = $0349             ; Random number seed (2 bytes)
 S_GROUP     = $034b             ; Group search
 S_BANK      = $034c             ; Bank search
@@ -63,17 +65,16 @@ SEQ_PLAY_IX = $0351             ; Sequence play note index
 SEQ_COUNT   = $0353             ; Sequence note countdown
 SEQ_LAST    = $0354             ; Sequence last note played
 RANDOM      = $0355             ; Random number for mutation
-FILENAME    = $0356             ; KERNAL filename ($0356-$035f)
-PROGNAME    = $0360             ; Unpacked program name ($0360-$0375)
-DRAW_IX     = $0376             ; Drawn field index
-VIEW_IX     = $0377             ; Field index in Library View
-LAST_LIB_IX = $0378             ; Last index in Library View
-UNDO_LEV    = $0379             ; Current undo level
-LAST_NRPN   = $037a             ; Last NRPN, used for keeping track of Undo
-STRIPE      = $037b             ; Mod 2 state for reverse ($80 when reversed)
-HALF_TEMPO  = $037c             ; Time left before note off
+FILENAME    = $0356             ; KERNAL filename ($0356-$0366)
+PROGNAME    = $0367             ; Unpacked program name ($0367-$037b)
+DRAW_IX     = $037d             ; Drawn field index
+VIEW_IX     = $037e             ; Field index in Library View
+LAST_LIB_IX = $037f             ; Last index in Library View
+UNDO_LEV    = $0380             ; Current undo level
+LAST_NRPN   = $0381             ; Last NRPN, used for keeping track of Undo
+STRIPE      = $0382             ; Mod 2 state for reverse ($80 when reversed)
+HALF_TEMPO  = $0383             ; Time left before note off
 
-DISKSETTING = $3e00             ; Memory for these settings on disk
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
 NRPN_TX     = CURPRG+$a1        ; NRPN Transmit toggle
 DEVICE_NUM  = CURPRG+$a2        ; Storage Device number
@@ -85,14 +86,14 @@ MUTATE      = CURPRG+$a7        ; Mutate flag
 SEQ_REC_IX  = CURPRG+$a8        ; Sequence record index
 
 ; Application Data Storage
-OUTSYSEX    = $1200             ; Outgoing sysex stage
-CURPRG      = $1300             ; Current program indexed buffer (128 bytes)
-UNDO_NRPN   = $1400             ; NRPN for undo level (64 bytes)
-UNDO_VAL    = $1440             ; Value for undo level (64 bytes)
-SEED1       = $1480             ; Seed 1 program for generator (128 bytes)
-SEED2       = $1500             ; Seed 2 program for generator (128 bytes)
-SEQUENCE    = $1580             ; Sequence note data (up to 64 steps)
-VELOCITY    = $15c0             ; Sequence velocity data (up to 64 steps)
+TEMPBUFF    = $1200             ; Outgoing sysex stage (256 bytes)
+SEED1       = $1200             ; Seed 1 program for generator
+SEED2       = $1280             ; Seed 2 program for generator
+CURPRG      = $1300             ; Current program indexed buffer (170 bytes)
+SEQUENCE    = $1400             ; Sequence note data (up to 64 steps)
+VELOCITY    = $1440             ; Sequence velocity data (up to 64 steps)
+UNDO_NRPN   = $1480             ; NRPN for undo level (64 bytes)
+UNDO_VAL    = $14c0             ; Value for undo level (64 bytes)
 LIBRARY     = $1600             ; Storage for 64 programs (160x64=10240 bytes)
 LIB_TOP     = LibraryH-LibraryL ; Number of library entries
 
@@ -184,6 +185,7 @@ REST        = 10                ; R
 RUN         = 24                ; RUN/STOP
 DSAVE       = 41                ; S 
 DLOAD       = 21                ; L
+DMERGE      = 36                ; M
 PRGREQ      = 48                ; Q
 UNDO        = 33                ; Z
 HEX         = 26                ; X
@@ -210,10 +212,13 @@ F_TEMPO     = 17                ; Tempo in BPM
 F_QCOMP     = 18                ; Q Compensation
 
 ; System Resources
+;NMIR        = $ff56             ; Return from NMI for production
+NMIR        = $feb2             ; Return from NMI for dev
 CINV        = $0314             ; ISR vector
-NMINV       = $0318             ; Release NMI vector
-;-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
-IRQ         = $eb12             ; System ISR return point
+;NMINV       = $0318             ; Release NMI vector
+-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
+;IRQ         = $eb12             ; System ISR return point
+-IRQ       = $fffe             ; Development IRQ non-vector (uncomment for dev)
 VIC         = $9000             ; VIC starting address
 CHROUT      = $ffd2             ; Character out
 CASECT      = $0291             ; Disable Commodore case
@@ -235,8 +240,10 @@ OPEN        = $ffc0             ; Open logical file
 CLOSE       = $ffc3             ; Close logical file
 CLALL       = $ffe7             ; Close all files
 CHKIN       = $ffc6             ; Define file as input
+CHKOUT      = $ffc9             ; Define file as output
 CHRIN       = $ffcf             ; Get input
 CLRCHN      = $ffcc             ; Close channel
+READST      = $ffb7             ; Get status
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; MAIN PROGRAM
@@ -258,7 +265,7 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             sta VIC+$04         ; ,,
             
             ; Initialize the library
-            ldy #64             ; For all 64 locations
+            ldy #LIB_TOP        ; For all 80 locations
             sty ANYWHERE        ; ,,
 -loop:      ldy ANYWHERE        ; ,,
             jsr Validate        ; ,, If it's valid, leave it alone (i.e,, from
@@ -295,7 +302,7 @@ lib_ok:     dec ANYWHERE
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta SEQ_REC_IX      ;   * Sequencer record index
             sta MUTATE          ;   * Generator mutation enable
-            sta MSGFLG          ;   * Disable KERNAL messages
+            sta MERGE           ;   * Disk merge flag
             lda #1              ;   * MIDI channel
             sta MIDI_CH         ;     ,,
             sta SEED1_PRG       ;   * Generator seed 1
@@ -432,7 +439,7 @@ NextLib:    lda PAGE            ; If on the Library View, treat this keypress
 nl_def:     lda CURLIB_IX       ; Add the specified number to the
             clc                 ;   library number
             adc IX              ;   ,,
-            cmp #LIB_TOP        ; If it overflows, set back to 64
+            cmp #LIB_TOP        ; If it overflows, set back to 80
             bcc nl_set          ; ,,
             lda #LIB_TOP-1      ; ,,
 nl_set:     sta CURLIB_IX       ; Store the new index
@@ -966,73 +973,146 @@ GoHelp:     lda #7
 setup_r:    jmp MainLoop
 
 ; Disk Save
-GoSave:     jsr Popup
+GoSave:     jsr CLALL
+            jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            jsr SetName         ; SetName calls SETNAM
-            bcs disk_canc       ; Cancel, so return
+            jsr SetName         ; Get user name input
+            bcc start_save      ; If OK, start save
+            jmp disk_canc       ; Cancel, so return
+start_save: lda #0              ; Turn off KERNAL messages
+            sta MSGFLG          ; ,,
+            tya                 ; Length of name for SETNAM call
+            ldx #<FILENAME      ; Pointer to name (low)
+            ldy #>FILENAME      ; Pointer to name (high)
+            jsr SETNAM          ; Call SETNAM            
             jsr StopSeq         ; Stop sequence if name OK
-            ldy #$10            ; Move settings to saved area
--loop:      lda CURPRG+$a0,y    ; ,,
-            sta DISKSETTING,y   ; ,,
-            dey                 ; ,,
-            bpl loop            ; ,,
-            ldx DEVICE_NUM      ; Device number
-            ldy #0              ; Command (none)
-            jsr SETLFS          ; ,,                  
+            ldx DEVICE_NUM      ; Set up LFS. Device number
+            ldy #2              ;   Secondary address
+            lda #2              ;   File number
+            jsr SETLFS          ;   ,,                  
+            jsr OPEN            ; Open file
+            bcs disk_error      ; ,,
+            ldx #2              ; CHKOUT
+            jsr CHKOUT          ; ,,
             ldx #SM_SAVING      ; Show "SAVING..."
             jsr Status          ; ,,
-            lda #<SEQUENCE      ; Set up KERNAL SAVE
-            sta TAB             ; ,,
-            lda #>SEQUENCE      ; ,,
-            sta TAB+1           ; ,,
-            ldx #$10            ; ,, (top of save, low)
-            ldy #$3e            ; ,, (top of save, high)
-            lda #$c1            ; ,, (location of start)
-            jsr SAVE
-            bcc disk_ok
-            ; Fall through to disk_error
+            ldy #0              ; Initialize disk save index
+-next_rec:  sty DISKLIB_IX      ; ,,
+            tya                 ; Show progress bar
+            asl                 ; ,, Multiple progress by 2
+            jsr ProgPopup       ; ,,
+            ldy DISKLIB_IX      ; Validate the program for save
+            jsr Validate        ; ,,
+            bne snext_prg       ; ,,
+            ldy #0              ; Send sysex to file
+-loop:      lda (PTR),y         ; ,,
+            jsr CHROUT          ; ,,
+            cmp #ST_ENDSYSEX    ; If it's the end of sysex, advance
+            beq snext_prg       ;   to next program
+            iny                 ; Increment the byte counter and loop
+            bne loop            ; ,,
+snext_prg:  ldy DISKLIB_IX      ; Increment the disk library index 
+            iny                 ; ,,
+            cpy #LIB_TOP        ; Has it reached the end?
+            bne next_rec        ; If not, loop
+            lda #2              ; Close the save
+            jsr CLOSE           ; ,,
+            jsr CLRCHN          ; ,,
+            jmp disk_ok
             
 ; Disk Error Message
-disk_error: ldx #SM_FAIL
+disk_error: lda #2
+            jsr CLOSE
+            jsr CLRCHN
+            ldx #SM_FAIL
             jsr Status
             jsr SwitchPage
             jmp MainLoop
 
+; Disk Merge
+; Merge is like Load, except instead of loading from library index 0,
+; Merge loads from the currently-selected library entry.
+GoMerge:    sec                 ; Enable merge
+            ror MERGE           ; ,,
+
 ; Disk Load
-GoLoad:     jsr Popup
+GoLoad:     jsr CLALL
+            jsr Popup
             lda #<LoadLabel
             ldy #>LoadLabel
-            jsr PrintStr    
-            jsr SetName         ; SetName calls SETNAM
-            bcs disk_canc       ; Cancel, so return
-            jsr StopSeq         ; Stop sequence if name OK            
+            bit MERGE
+            bpl load_lab
+            lda #<MergeLabel
+            ldy #>MergeLabel
+load_lab:   jsr PrintStr    
+            jsr SetName         ; Get name from user
+            bcc start_load
+            jmp disk_canc
+start_load: lda #0              ; Turn off KERNAL messages
+            sta MSGFLG          ; ,,
+            tya                 ; Length of name for SETNAM call
+            sec                 ; Subtract the ",P,W" from the filename
+            sbc #4              ; ,,
+            ldx #<FILENAME      ; Pointer to name (low)
+            ldy #>FILENAME      ; Pointer to name (high)
+            jsr SETNAM          ; Call SETNAM       
+            jsr StopSeq         ; Stop sequence if name OK   
             ldx DEVICE_NUM      ; Device number
-            ldy #1              ; Load to header location
+            ldy #2              ; Load to header location
+            lda #2              ; File number
             jsr SETLFS          ; ,,
+            jsr OPEN
+            bcs disk_error      ; ,,
+            ldx #2              ; CHKIN
+            jsr CHKIN           ; ,,
             ldx #SM_LOADING
-            jsr Status            
-            lda #0              ; Perform load
-            jsr LOAD            ; ,,      
-            bcc load_ok
-            jmp disk_error
-load_ok:    ldy CURLIB_IX       ; After successful load, unpack the current
-            jsr SetLibPtr       ;   (probably new) library entry to the
-            lda PTR             ;   program buffer
+            jsr Status       
+            bit MERGE           ; If Merge, start loading from current index
+            bpl not_merge       ; ,,
+            ldy CURLIB_IX       ; ,,
+            clc                 ; Clear the merge flag
+            ror MERGE           ; ,,
+            .byte $3c           ; Skip word (SKW)
+not_merge:  ldy #0              ; Initialize disk library index
+            sty DISKLIB_IX      ; ,,
+-next_rec:  ldy DISKLIB_IX      ; Get next library pointer
+            jsr SetLibPtr       ; ,,
+            ldy #0              ; Index within current message
+get_byte:   jsr READST
+            bne eof
+            jsr CHRIN           ; Get next byte
+            cmp #ST_SYSEX       ; Is it start of sysex?
+            bne ch_sysex        ; ,,
+            sta TEMPBUFF,y      ; Stash it away
+            ldy #1              ; ,,
+            bne get_byte        ; Go back for next byte
+ch_sysex:   cpy #0              ; Has sysex started?
+            beq get_byte        ; If not, go back
+            sta (PTR),y         ; Store in current library entry
+            iny                 ; Increment the message index
+            cmp #ST_ENDSYSEX    ; Is this the end of the record?
+            bne get_byte        ; ,,
+eorec:      inc DISKLIB_IX      ; END OF RECORD. Increment the disk library
+            lda #LIB_TOP        ;   index. If it's reached the library top,
+            cmp DISKLIB_IX      ;   then act as though we're EOF 
+            bne next_rec        ;   otherwise go back for another record
+eof:        lda #2
+            jsr CLOSE
+            jsr CLRCHN
+            ldy CURLIB_IX       ; Unpack current program into the edit buffer
+            jsr SetLibPtr       ;   after load, just in case it's changed
+            lda PTR             ;   ,,
             ldy PTR+1           ;   ,,
             jsr UnpBuff         ;   ,,
-            ldy #$10
--loop:      lda DISKSETTING,y   ; Get settings from disk save area
-            sta CURPRG+$a0,y    ; Put it in setting memory
-            dey                 ; ,,
-            bpl loop            ; ,,            
-            ; Fall through to disk_ok
+            ; Fall through to disk ok
             
             ; Shared exit points for both save and load
 disk_ok:    ldx #SM_OK          ; Show success message
             jsr Status          ; ,,
-disk_canc:  jsr SwitchPage      ; Back to main
+disk_canc:  jsr ShowPrgNum      ; Show program number
+            jsr SwitchPage      ; Back to main
             jmp MainLoop        ; ,,
             
 ; Request Program
@@ -1056,11 +1136,11 @@ req_c:      jsr Popup
             ldy #>PrgRequest    ;   from the message table
             jsr SysexMsg        ; Add it to the outgoing sysex buffer
             lda PTRD            ; Add the group number to the sysex
-            sta OUTSYSEX+4      ; ,,
+            sta TEMPBUFF+4      ; ,,
             lda PTRD+1          ; Add the bank/program number to the sysex
-            sta OUTSYSEX+5      ; ,,
+            sta TEMPBUFF+5      ; ,,
             lda #ST_ENDSYSEX    ; Add the end-of-sysex message
-            sta OUTSYSEX+6      ; ,,
+            sta TEMPBUFF+6      ; ,,
             jsr SendSysex       ; Send the request message
             ldx #SM_SENT        ; Show status and await dump from Prophet 5
 req_s:      jsr Status          ; ,,
@@ -1100,11 +1180,13 @@ undo_r:     jmp MainLoop
 ; If canceled, return with carry set
 ; If OK, return with carry clear and call SETNAM
 SetName:    lda #"."            ; Add file extension .P5
+            sta WINDOW_ED+6     ; ,,
+            lda #19             ; ,, (S)
             sta WINDOW_ED+7     ; ,,
-            lda #16             ; ,, (P)
+            lda #25             ; ,, (Y)
             sta WINDOW_ED+8     ; ,,
-            lda #"5"            ; ,,
-            sta WINDOW_ED+9     ; ,,
+            lda #24             ; ,, (X)
+            sta WINDOW_ED+9
             ldy #0              ; Set up editor with cursor position set
             sty IX              ;   at the beginning            
             lda #TXTCURSOR      ;   ,,
@@ -1133,6 +1215,8 @@ fch_bk:     cpy #BACKSP         ; Has backspace been pressed?
 fpos_cur:   lda #TXTCURSOR      ; ,, Add cursor at end
             ldy IX              ; ,,
             sta WINDOW_ED,y     ; ,,
+            lda #"."            ; .. Add file extension .P5
+            sta WINDOW_ED+6     ; ,, ,,           
             bne fgetkey         ; ,,
 fbacksp:    ldy IX
             beq fgetkey
@@ -1144,19 +1228,13 @@ fbacksp:    ldy IX
 fdone:      ldy IX
             cpy #0              ; Do not allow RETURN if there's no name
             beq fgetkey         ; ,,
-            lda #"."            ; Add file extension .P5
-            sta FILENAME,y      ; ,,
-            iny                 ; ,,
-            lda #"P"            ; ,,
-            sta FILENAME,y      ; ,,
-            iny                 ; ,,
-            lda #"5"            ; ,,
-            sta FILENAME,y      ; ,,
-            iny                 ; ,,
-            tya                 ; Length of name for SETNAM call
-            ldx #<FILENAME      ; Pointer to name (low)
-            ldy #>FILENAME      ; Pointer to name (high)
-            jsr SETNAM          ; Call SETNAM
+            ldx #0
+-loop:      lda SyxExt,x
+            sta FILENAME,y
+            iny
+            inx
+            cpx #8
+            bne loop            
             clc                 ; Carry clear for return
             rts
 
@@ -1778,7 +1856,7 @@ BufferSend: lda #<EditBuffer
             sta P_END+1
             jsr Pack
             lda #ST_ENDSYSEX
-            sta OUTSYSEX+$9c
+            sta TEMPBUFF+$9c
             jsr SendSysex
             bcc bsend_ok
             ldx #SM_FAIL 
@@ -1853,7 +1931,7 @@ hdr_ok:     lda PTR
             rts
                         
 ; Construct Sysex Message
-; from A=low/Y=high to OUTSYSEX
+; from A=low/Y=high to TEMPBUFF
 ; PTR points to the next byte in the sysex output stage
 SysexMsg:   sta PTR
             sty PTR+1
@@ -1862,20 +1940,20 @@ SysexMsg:   sta PTR
             lda (PTR),y
             cmp #$ff
             beq msg_done
-            sta OUTSYSEX,y
+            sta TEMPBUFF,y
             bne loop
 msg_done:   tya
             clc
-            adc #<OUTSYSEX
+            adc #<TEMPBUFF
             sta PTR
-            lda #>OUTSYSEX
+            lda #>TEMPBUFF
             sta PTR+1
 sm_r:       rts
             
 ; Send Sysex
 ; Returns with carry set if error
 SendSysex:  ldy #0
--loop:      lda OUTSYSEX,y
+-loop:      lda TEMPBUFF,y
             jsr MIDIOUT
             bcs send_err
             cmp #ST_ENDSYSEX
@@ -2169,7 +2247,7 @@ midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
-            jmp RFI             ; Restore registers and return from interrupt
+            jmp NMIR            ; Defined in p5ed-dev.asm and p5ed-cart.asm
 sysexwait:  lda #$5a            ; Show MIDI indicator in upper left
             sta SCREEN          ; ,,
             jsr MIDIIN          ; MIDI byte is in A
@@ -2551,6 +2629,9 @@ EditBuffer: .byte $f0, $01, $32, $03, $ff
 PrgDump:    .byte $f0, $01, $32, $02, $ff
 PrgRequest: .byte $f0, $01, $32, $05, $05, $01, $ff
 
+; System Exclusive File Extension
+SyxExt:     .asc ".SYX,P,W"
+
 ; Value Bar Partials
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 
@@ -2566,19 +2647,19 @@ Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
             .byte VOICESEND,CLEAR,COPY,RUN,REST,BACKSP,DSAVE,DLOAD
-            .byte PRGREQ,UNDO,HEX,0
+            .byte PRGREQ,UNDO,HEX,DMERGE,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceSend-1
             .byte <Erase-1,<CopyLib-1,<Sequencer-1,<AddRest-1,<DelNote-1
-            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1
+            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1,<GoMerge-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceSend-1
             .byte >Erase-1,>CopyLib-1,>Sequencer-1,>AddRest+1,>DelNote-1
-            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1
+            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1,>GoMerge-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
@@ -2805,10 +2886,11 @@ Help:       .asc CR
             .asc 5," Q....",30," REQUEST DATA",CR
             .asc 5," G....",30," GENERATE PROG",CR
             .asc 5," L....",30," LOAD LIBRARY",CR
+            .asc 5," M....",30,"      MERGE",CR
             .asc 5," S....",30," SAVE LIBRARY",CR
             .asc 5," X....",30," HEX VIEW",CR
             .asc 5," RUN  ",30," PLAY/STOP",CR
-            .asc 5," ",RVON,"C=",RVOF,"RUN",30," RECORD",CR,CR
+            .asc 5," ",RVON,"C=",RVOF,"RUN",30," RECORD",CR
             .asc 158," WWW.BEIGEMAZE.COM/ED",30
             .asc 00
             
@@ -2841,6 +2923,7 @@ PrgLabel:   .asc 5,"PROGRAM #",30,0
 ReqLabel:   .asc 5,"REQUEST #",30,0
 SaveLabel:  .asc 5,"DISK SAVE",30,0
 LoadLabel:  .asc 5,"DISK LOAD",30,0
+MergeLabel: .asc 5,"DISK MERGE",30,0
 SendMenu:   .asc 5,"SEND DATA",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROG"," ",RVON,"E",RVOF,"DIT",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
@@ -2854,7 +2937,6 @@ EraseConf:  .asc 5,"ERASE:",CR
             .asc RT,RT,RT,RT,RT,RT,"SURE?(Y/N)",30,0
 
 CopyLabel:  .asc 5,"COPY TO",30,0
-            
                          
 ; Library Sysex Pointers
 ; Indexed             
@@ -2862,10 +2944,11 @@ LibraryL:   .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
             .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
             .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
             .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60            
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60            
+            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60 
             .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
-            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60            
-            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60            
-            .byte $00,$a0,$40,$e0,$80,$20,$c0,$60          
+                                              
 LibraryH:   .byte $16,$16,$17,$17,$18,$19,$19,$1a
             .byte $1b,$1b,$1c,$1c,$1d,$1e,$1e,$1f
             .byte $20,$20,$21,$21,$22,$23,$23,$24
