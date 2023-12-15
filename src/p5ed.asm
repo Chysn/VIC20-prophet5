@@ -38,16 +38,16 @@ SYIN        = $02               ; Sysex In pointer (2 bytes)
 SYIN_IX     = $04               ; Sysex In position index
 PTR         = $05               ; Library pointer (2 bytes)
 PTRD        = $07               ; Destination pointer (2 bytes)
+FIELD_IX    = $09               ; Current field index
 PAGE        = $0e               ; Current page number
 CURLIB_IX   = $0f               ; Current library index
 LISTEN      = $a0               ; Sysex listen flag (jiffy clock not used)
 READY       = $a1               ; Sysex ready flag (jiffy clock not used)
 ANYWHERE    = $a2               ; Temporary iterator (jiffy click not used)
-TAB         = $c1               ; Save start pointer (2 bytes)
 
 VIEW_START  = $033d             ; Library view start entry
-FIELD_IX    = $033e             ; Current field index
 MERGE       = $033f             ; Merge flag
+SVOICE      = $0340             ; Single Voice flag
 REPEAT      = $0341             ; Repeat speed
 KEYBUFF     = $0342             ; Last key pressed
 IX          = $0343             ; General use index
@@ -186,9 +186,11 @@ RUN         = 24                ; RUN/STOP
 DSAVE       = 41                ; S 
 DLOAD       = 21                ; L
 DMERGE      = 36                ; M
+DTHIS       = 50                ; T
 PRGREQ      = 48                ; Q
 UNDO        = 33                ; Z
 HEX         = 26                ; X
+
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -972,13 +974,26 @@ GoHelp:     lda #7
             jsr SwitchPage
 setup_r:    jmp MainLoop
 
+; Save This Voice
+; This is like save, except it will only save the current voice
+GoVoice:    sec
+            ror SVOICE
+            ; Fall through to GoSave
+
 ; Disk Save
 GoSave:     jsr CLALL
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            jsr SetName         ; Get user name input
+            bit SVOICE          ; If this is a single-voice save,
+            bpl prompt          ;   show the voice number in the prompt
+            ldy CURLIB_IX       ;   ,,
+            iny                 ;   ,, increment for 1-index
+            jsr TwoDigNum       ;   ,, 
+            stx SCREEN+212      ;   ,, put this in the popup window
+            sta SCREEN+213      ;   ,,
+prompt:     jsr SetName         ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
 start_save: lda #0              ; Turn off KERNAL messages
@@ -998,7 +1013,11 @@ start_save: lda #0              ; Turn off KERNAL messages
             jsr CHKOUT          ; ,,
             ldx #SM_SAVING      ; Show "SAVING..."
             jsr Status          ; ,,
-            ldy #0              ; Initialize disk save index
+            bit SVOICE          ; If this is a single-voice save, set the
+            bpl save_lib        ;   disk library index to the current index
+            ldy CURLIB_IX       ;   ,,
+            .byte $3c           ; Skip word (SKW) 
+save_lib:   ldy #0              ; Initialize disk save index
 -next_rec:  sty DISKLIB_IX      ; ,,
             tya                 ; Show progress bar
             asl                 ; ,, Multiple progress by 2
@@ -1013,11 +1032,13 @@ start_save: lda #0              ; Turn off KERNAL messages
             beq snext_prg       ;   to next program
             iny                 ; Increment the byte counter and loop
             bne loop            ; ,,
-snext_prg:  ldy DISKLIB_IX      ; Increment the disk library index 
+snext_prg:  bit SVOICE          ; If this is a single-voice save, 
+            bmi save_r          ;   close it out after the first sysex message
+            ldy DISKLIB_IX      ; Increment the disk library index 
             iny                 ; ,,
             cpy #LIB_TOP        ; Has it reached the end?
             bne next_rec        ; If not, loop
-            lda #2              ; Close the save
+save_r:     lda #2              ; Close the save
             jsr CLOSE           ; ,,
             jsr CLRCHN          ; ,,
             jmp disk_ok
@@ -1036,6 +1057,7 @@ disk_error: lda #2
 ; Merge loads from the currently-selected library entry.
 GoMerge:    sec                 ; Enable merge
             ror MERGE           ; ,,
+            ; Fall through to GoLoad
 
 ; Disk Load
 GoLoad:     jsr CLALL
@@ -1072,8 +1094,6 @@ start_load: lda #0              ; Turn off KERNAL messages
             bit MERGE           ; If Merge, start loading from current index
             bpl not_merge       ; ,,
             ldy CURLIB_IX       ; ,,
-            clc                 ; Clear the merge flag
-            ror MERGE           ; ,,
             .byte $3c           ; Skip word (SKW)
 not_merge:  ldy #0              ; Initialize disk library index
             sty DISKLIB_IX      ; ,,
@@ -1094,8 +1114,12 @@ ch_sysex:   cpy #0              ; Has sysex started?
             iny                 ; Increment the message index
             cmp #ST_ENDSYSEX    ; Is this the end of the record?
             bne get_byte        ; ,,
-eorec:      inc DISKLIB_IX      ; END OF RECORD. Increment the disk library
-            lda #LIB_TOP        ;   index. If it's reached the library top,
+eorec:      ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
+            jsr TwoDigNum       ;   in the status area.
+            stx STATUSDISP+20   ;   ,,
+            sta STATUSDISP+21   ;   ,,
+            inc DISKLIB_IX      ; Increment the disk library index.
+            lda #LIB_TOP        ;   If it's reached the library top,
             cmp DISKLIB_IX      ;   then act as though we're EOF 
             bne next_rec        ;   otherwise go back for another record
 eof:        lda #2
@@ -1240,7 +1264,7 @@ fdone:      ldy IX
 
 ; Program Number Input
 ; Cursor position in Y
-SetPrgNum:  sty IX              ; ,, Set current cursor position
+SetPrgNum:  sty IX              ; Set current cursor position
             lda #TXTCURSOR      ; ,, Add cursor at end
             sta WINDOW_ED,y     ; ,,
 pgetkey:    jsr Keypress        ; Keycode in Y, PETSCII in A
@@ -1322,7 +1346,10 @@ no_decinc:  clc
 
 ; Draw Edit Page
 ; at PAGE
-SwitchPage: jsr ClrScr
+SwitchPage: lda #0              ; Clear merge and single voice flags
+            sta MERGE           ; ,,
+            sta SVOICE          ; ,,
+            jsr ClrScr
             jsr ClrCursor
             ldx PAGE            ; Acquire current page index
             lda EditH,x         ; Draw that page's field labels
@@ -2616,7 +2643,7 @@ Generated:  .asc " GENERATED",0
 ClrStatus:  .asc "          ",0
 Copied:     .asc "    COPIED",0
 Saving:     .asc "    SAVING",0
-Loading:    .asc "   LOADING",0
+Loading:    .asc "LOADING 00",0
 Success:    .asc "   SUCCESS",0
 Undone:     .asc "   UNDO 00",0
 StatusL:    .byte <Failed,<Received,<Sent,<NotEmpty,<Welcome,<Generated
@@ -2647,19 +2674,21 @@ Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
             .byte VOICESEND,CLEAR,COPY,RUN,REST,BACKSP,DSAVE,DLOAD
-            .byte PRGREQ,UNDO,HEX,DMERGE,0
+            .byte PRGREQ,UNDO,HEX,DMERGE,DTHIS,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceSend-1
             .byte <Erase-1,<CopyLib-1,<Sequencer-1,<AddRest-1,<DelNote-1
-            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1,<GoMerge-1
+            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1,<GoMerge-1,
+            .byte <GoVoice-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceSend-1
             .byte >Erase-1,>CopyLib-1,>Sequencer-1,>AddRest+1,>DelNote-1
             .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1,>GoMerge-1
+            .byte >GoVoice-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
@@ -2871,27 +2900,25 @@ Setup:      .asc 30,CR,"   ED FOR PROPHET 5",CR
             .asc RT,"MUTATIONS"
             .asc 00
             
-Help:       .asc CR
+Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," SPACE",30," SETUP PAGE",CR
             .asc 5," F1-F7",30," EDIT PAGE",CR
             .asc 5," ",RVON,"C=",RVOF,"FN ",30," LIBRARY VIEW",CR
             .asc 5," CRSR ",30," SELECT PARAM",CR
             .asc 5," < >  ",30," EDIT VALUE",CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
-            .asc 5," - +  ",30," BROWSE LIBRARY",CR
-            .asc 5," CLR  ",30," ERASE PROG",CR
+            .asc 5," - +  ",30," SELECT VOICE",CR
+            .asc 5," CLR  ",30," ERASE VOICE",CR
             .asc 5," P....",30," SET PROG #",CR
-            .asc 5," C....",30," COPY PROG",CR
-            .asc 5," V....",30," SEND DATA",CR
+            .asc 5," C....",30," COPY VOICE",CR
+            .asc 5," V....",30," SEND VOICE(S)",CR
             .asc 5," Q....",30," REQUEST DATA",CR
-            .asc 5," G....",30," GENERATE PROG",CR
-            .asc 5," L....",30," LOAD LIBRARY",CR
-            .asc 5," M....",30,"      MERGE",CR
-            .asc 5," S....",30," SAVE LIBRARY",CR
+            .asc 5," G....",30," GENERATE VOICE",CR
+            .asc 5," L....",30," LOAD (",RVON,"M",RVOF,"ERGE)",CR
+            .asc 5," S....",30," SAVE (",RVON,"T",RVOF,"HIS)",CR
             .asc 5," X....",30," HEX VIEW",CR
             .asc 5," RUN  ",30," PLAY/STOP",CR
-            .asc 5," ",RVON,"C=",RVOF,"RUN",30," RECORD",CR
-            .asc 158," WWW.BEIGEMAZE.COM/ED",30
+            .asc 5," ",RVON,"C=",RVOF,"RUN",30," RECORD"
             .asc 00
             
 View:       .asc 30,CR,"     LIBRARY VIEW",CR
@@ -2921,17 +2948,16 @@ Window:     .asc 5 ; White
             
 PrgLabel:   .asc 5,"PROGRAM #",30,0
 ReqLabel:   .asc 5,"REQUEST #",30,0
-SaveLabel:  .asc 5,"DISK SAVE",30,0
-LoadLabel:  .asc 5,"DISK LOAD",30,0
-MergeLabel: .asc 5,"DISK MERGE",30,0
-SendMenu:   .asc 5,"SEND DATA",CR
+SaveLabel:  .asc 5,"SAVE",30,0
+LoadLabel:  .asc 5,"LOAD",30,0
+MergeLabel: .asc 5,"MERGE",30,0
+SendMenu:   .asc 5,"SEND VOICE",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROG"," ",RVON,"E",RVOF,"DIT",CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
             .asc 30,0
-SendMenu2:  .asc 5,"SEND DATA",CR,CR
+SendMenu2:  .asc 5,"SEND VOICE",CR,CR
             .asc RT,RT,RT,RT,RT,RT,RVON,"E",RVOF,"DIT BUFF"
-            .asc 30,0
-            
+            .asc 30,0       
 EraseConf:  .asc 5,"ERASE:",CR
             .asc RT,RT,RT,RT,RT,RT,"ARE YOU",CR
             .asc RT,RT,RT,RT,RT,RT,"SURE?(Y/N)",30,0
