@@ -29,6 +29,7 @@ FPS         = 120               ; IRQs per second
 PROCSP      = 1020000           ; Processor speed in cycles per second
 IRQ_C       = PROCSP / FPS      ; IRQ countdown value
 UNDOS       = 32                ; Number of undo levels
+SEQS        = 64                ; Number of sequencer steps
 
 ; Application Memory
 ; In addition, zero page usage by
@@ -73,29 +74,29 @@ LISTEN      = $a0               ; Sysex listen flag (jiffy clock not used)
 READY       = $a1               ; Sysex ready flag (jiffy clock not used)
 ANYWHERE    = $a2               ; Temporary iterator (jiffy click not used)
 
-FILENAME    = $033c             ; KERNAL filename ($033c-$034b)
-PROGNAME    = $034c             ; Unpacked program name ($034c-$0360)
-UNDO_NRPN   = $0370             ; NRPN for undo level (32 levels)
-UNDO_VAL    = UNDO_NRPN+UNDOS   ; Values for undo level
-
-MIDI_CH     = CURPRG+$a0        ; MIDI channel
-NRPN_TX     = CURPRG+$a1        ; NRPN Transmit toggle
-DEVICE_NUM  = CURPRG+$a2        ; Storage Device number
-SEQ_STEPS   = CURPRG+$a3        ; Sequencer Steps
-SEQ_TEMPO   = CURPRG+$a4        ; Sequencer Tempo
-SEED1_PRG   = CURPRG+$a5        ; Generator Seed 1
-SEED2_PRG   = CURPRG+$a6        ; Generator Seed 2
-MUTATE      = CURPRG+$a7        ; Mutate flag
-SEQ_REC_IX  = CURPRG+$a8        ; Sequence record index
+; Application settings
+MIDI_CH     = CURVCE+$a0        ; MIDI channel
+NRPN_TX     = CURVCE+$a1        ; NRPN Transmit toggle
+DEVICE_NUM  = CURVCE+$a2        ; Storage Device number
+SEQ_STEPS   = CURVCE+$a3        ; Sequencer Steps
+SEQ_TEMPO   = CURVCE+$a4        ; Sequencer Tempo
+SEED1_PRG   = CURVCE+$a5        ; Generator Seed 1
+SEED2_PRG   = CURVCE+$a6        ; Generator Seed 2
+MUTATE      = CURVCE+$a7        ; Mutate flag
+SEQ_REC_IX  = CURVCE+$a8        ; Sequence record index
 
 ; Application Data Storage
+FILENAME    = $033c             ; KERNAL filename ($033c-$034b)
+PROGNAME    = $034c             ; Unpacked program name ($034c-$0360)
+UNDO_NRPN   = $02a2             ; NRPN for undo level (32 levels)
+UNDO_VAL    = UNDO_NRPN+UNDOS   ; Values for undo level
+SEQUENCE    = $033c             ; Sequence note data (up to 64 steps)
+VELOCITY    = $033c+SEQS        ; Sequence velocity data (up to 64 steps)
 TEMPBUFF    = $1200             ; Outgoing sysex stage (256 bytes)
 SEED1       = $1200             ; Seed 1 program for generator
 SEED2       = $1280             ; Seed 2 program for generator
-CURPRG      = $1300             ; Current program indexed buffer (170 bytes)
-SEQUENCE    = $1400             ; Sequence note data (up to 64 steps)
-VELOCITY    = $1440             ; Sequence velocity data (up to 64 steps)
-LIBRARY     = $1600             ; Storage for 64 programs (160x64=10240 bytes)
+CURVCE      = $1300             ; Current voice indexed buffer (170 bytes)
+LIBRARY     = $1400             ; Storage for 64 voices (160x64=10240 bytes)
 LIB_TOP     = LibraryH-LibraryL ; Number of library entries
 
 ; Packing memory, for forward references
@@ -186,8 +187,6 @@ REST        = 10                ; R
 RUN         = 24                ; RUN/STOP
 DSAVE       = 41                ; S 
 DLOAD       = 21                ; L
-DMERGE      = 36                ; M
-DTHIS       = 50                ; T
 PRGREQ      = 48                ; Q
 UNDO        = 33                ; Z
 HEX         = 26                ; X
@@ -503,7 +502,7 @@ inc_bypass: jsr PrepField       ; Get field value
             cmp TRangeH,y
             bcs id_r            ; Already at maximum, so do nothing
             jsr NRPNpre         ; Pre-change (Undo)
-            inc CURPRG,x
+            inc CURVCE,x
 nrpn_msg:   jsr NRPNpost        ; Send NRPN message, handle Undo
             ldy FIELD_IX
             jsr DrawField
@@ -541,7 +540,7 @@ dec_bypass: jsr PrepField       ; Get field value
             cmp TRangeL,y
             beq id_r            ; Already at minimum, so do nothing
             jsr NRPNpre         ; Pre-change (Undo)
-            dec CURPRG,x
+            dec CURVCE,x
             jmp nrpn_msg
 
 ; Single-Key Edit
@@ -564,15 +563,15 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             ldx FNRPN,y         ; Anything else will advance to its max
             lda FType,y         ;   and then roll back to 0
             tay                 ;   ,,
-            lda CURPRG,x        ;   ,,
+            lda CURVCE,x        ;   ,,
             cmp TRangeH,y       ;   ,,
             bcc adv_f           ;   ,,
             cpy #F_VALUE        ; If this is a value type, do not roll back      
             beq edna_r          ;   after passing the high range; do nothing
             lda TRangeL,y       ; If above high range, set to low
-            sta CURPRG,x        ;   and save that
+            sta CURVCE,x        ;   and save that
             jmp val_ch          ;   ,,
-adv_f:      inc CURPRG,x        ;   ,,
+adv_f:      inc CURVCE,x        ;   ,,
 val_ch:     ldx FIELD_IX        ;   Send NRPN, if enabled, handle Undo
             jsr NRPNpost        ;   ,,
             ldy FIELD_IX        ;   Draw the new field value
@@ -607,7 +606,7 @@ getkey:     jsr Keypress        ; Get key code in Y, PETSCII in A
             cmp #"Z"+1          ; ,,
             bcs getkey          ; ,,
             ldy IX              ; Put this character into the NRPN buffer
-            sta CURPRG+65,y     ; ,,
+            sta CURVCE+65,y     ; ,,
             jsr PETtoScr        ; Convert to screen code for display
             ldy IX              ; ,,
             sta (FIELD),y       ; ,,
@@ -622,7 +621,7 @@ backsp:     ldy IX              ; Backspace
             dec IX              ; Backspace by moving index back
             ldy IX              ; ,,
             lda #0              ; And adding a 0 in the NRPN buffer
-            sta CURPRG+65,y     ; ,,
+            sta CURVCE+65,y     ; ,,
             beq pos_cur
 entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
             lda #" "            ; ,,
@@ -630,7 +629,7 @@ entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
             jsr DrawCursor      ; Replace removed field-level cursor
             jmp MainLoop        ; And go back to Main
 find_end:   ldy #0              ; Starting NRPN index of Name
--loop:      lda CURPRG+65,y     ; Find the end of the current name, where the
+-loop:      lda CURVCE+65,y     ; Find the end of the current name, where the
             beq fc_r            ;   cursor should go
             iny                 ;   ,,
             cpy #20             ;   ,,
@@ -683,7 +682,7 @@ gen_ok:     lda $9114           ; Seed the random number shift register
             lda SEED2,y         ;   ,,  otherwise use seed 2)
             tax                 ;   ,,
 s1:         txa                 ;   ,,
-            sta CURPRG,y        ;   ,,
+            sta CURVCE,y        ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
             lda MUTATE          ; Mutate generated program if enabled
@@ -698,7 +697,7 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
 -loop:      jsr Rand127         ; Get a value between 0-120
             cmp #121            ; ,,
             bcs loop            ; ,,
-            sta CURPRG,x        ; Store it in the current program
+            sta CURVCE,x        ; Store it in the current program
             dec IX              ; Decrement the mutation count
             bne mutate          ; Go back for more
 no_mutate:  jsr SetCurPtr       ; Pack program into library
@@ -948,7 +947,7 @@ AddRest:    lda SEQ_XPORT       ; Is the sequencer in record status?
             cmp #1              ; ,,
             bne del_r           ; If not, do nothing
             lda SEQ_REC_IX      ; Is the record head at the end?
-            cmp #64             ;   If so, do nothing
+            cmp #SEQS           ;   If so, do nothing
             beq del_r           ;   ,,
             ldy SEQ_REC_IX      ; Set 0 for next note and velocity
             lda #0              ; ,,
@@ -956,7 +955,7 @@ AddRest:    lda SEQ_XPORT       ; Is the sequencer in record status?
             sta VELOCITY,y      ; ,,
             iny                 ; Increment the record step
             sty SEQ_REC_IX      ; ,,
-            cpy #64
+            cpy #SEQS
             beq rest_r
             jsr ShowStep        ; Update display, show num but remove name
 rest_r:     jmp MainLoop
@@ -973,14 +972,14 @@ GoHelp:     lda #7
             jsr SwitchPage
 setup_r:    jmp MainLoop
 
-; Save This Voice
-; This is like save, except it will only save the current voice
-GoVoice:    sec
-            ror SVOICE
-            ; Fall through to GoSave
-
 ; Disk Save
-GoSave:     jsr CLALL
+; When Commodore is held, save only the active voice
+GoSave:     lda SHIFT           ; Check for Commodore key
+            cmp #2              ; ,,
+            bne save_all        ; ,,
+            sec                 ; If held, enable one voice save
+            ror SVOICE          ; ,,
+save_all:   jsr CLALL
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
@@ -989,9 +988,12 @@ GoSave:     jsr CLALL
             bpl prompt          ;   show the voice number in the prompt
             ldy CURLIB_IX       ;   ,,
             iny                 ;   ,, increment for 1-index
-            jsr TwoDigNum       ;   ,, 
-            stx SCREEN+212      ;   ,, put this in the popup window
-            sta SCREEN+213      ;   ,,
+            jsr TwoDigNum       ;   ,,
+            ora #$80            ;   ,, put ones place in reverse
+            sta SCREEN+213      ;   ,, in the popup window
+            txa                 ;   ,, same with tens place
+            ora #$80            ;   ,,
+            sta SCREEN+212      ;   ,, 
 prompt:     jsr SetName         ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
@@ -1051,15 +1053,16 @@ disk_error: lda #2
             jsr SwitchPage
             jmp MainLoop
 
-; Disk Merge
-; Merge is like Load, except instead of loading from library index 0,
-; Merge loads from the currently-selected library entry.
-GoMerge:    sec                 ; Enable merge
-            ror MERGE           ; ,,
-            ; Fall through to GoLoad
 
 ; Disk Load
-GoLoad:     jsr CLALL
+; When Commodore is held, enables Merge load, which loads voices from
+; the active index
+GoLoad:     lda SHIFT           ; Check for Commodore key
+            cmp #2              ; ,,
+            bne load_all        ; ,,
+            sec                 ; Enable merge if Commodore is pressed
+            ror MERGE           ; ,,
+load_all:   jsr CLALL
             jsr Popup
             lda #<LoadLabel
             ldy #>LoadLabel
@@ -1097,7 +1100,8 @@ disk_err2:  bcs disk_error      ; ,,
             .byte $3c           ; Skip word (SKW)
 not_merge:  ldy #0              ; Initialize disk library index
             sty DISKLIB_IX      ; ,,
--next_rec:  jsr SetCurPtr       ; Get next library pointer
+-next_rec:  ldy DISKLIB_IX      ; Get next library pointer
+            jsr SetLibPtr       ; Get next library pointer
             ldy #0              ; Index within current message
 get_byte:   jsr READST
             bne eof
@@ -1113,7 +1117,10 @@ ch_sysex:   cpy #0              ; Has sysex started?
             iny                 ; Increment the message index
             cmp #ST_ENDSYSEX    ; Is this the end of the record?
             bne get_byte        ; ,,
-eorec:      ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
+eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual 
+            jsr Validate        ;   Prophet 5 voice?
+            bne next_rec        ;   ,, If not, use the same DISKLIB_IX again
+            ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
             jsr TwoDigNum       ;   in the status area.
             stx STATUSDISP+20   ;   ,,
             sta STATUSDISP+21   ;   ,,
@@ -1131,7 +1138,7 @@ eof:        and #$40            ; If this is a read error, show error message
             ldy PTR+1           ;   ,,
             jsr UnpBuff         ;   ,,
             ; Fall through to disk ok
-            
+            f
             ; Shared exit points for both save and load
 disk_ok:    ldx #SM_OK          ; Show success message
             jsr Status          ; ,,
@@ -1181,7 +1188,7 @@ Undo:       lda SHIFT           ; Commodore must be held for Undo
             pha                 ; ,, (store for DrawByNRPN, below)
             tax                 ; ,, (store in X)
             lda UNDO_VAL,y      ; Get the value for the level
-            sta CURPRG,x        ; Restore the program value
+            sta CURVCE,x        ; Restore the program value
             dec UNDO_LEV        ; Go to the next level
             lda #$ff            ; Reset the last NRPN number
             sta LAST_NRPN       ; ,,
@@ -1337,7 +1344,7 @@ PrepField:  ldy FIELD_IX
             cmp #F_NAME
             beq no_decinc
             tay
-            lda CURPRG,x
+            lda CURVCE,x
             sec
             rts
 no_decinc:  clc
@@ -1456,7 +1463,7 @@ DrawField:  jsr FieldLoc        ; Set the field's physical screen location
             pha                 ;   ,,
             lda FNRPN,y         ; Get this field's NRPN, which is also the
             tay                 ;   index within the program data
-            lda CURPRG,y        ;   and put the current value in A
+            lda CURVCE,y        ;   and put the current value in A
 draw_r:     rts                 ; Pull the draw address off the stack, dispatch
          
 ; Set Field Location   
@@ -1870,12 +1877,12 @@ BufferSend: lda #<EditBuffer
             sta P_RESULT
             lda PTR+1
             sta P_RESULT+1
-            lda #<CURPRG
+            lda #<CURVCE
             sta P_START
             clc
             adc #$88
             sta P_END
-            lda #>CURPRG
+            lda #>CURVCE
             sta P_START+1
             sta P_END+1
             jsr Pack
@@ -1893,9 +1900,9 @@ bsend_r:    jsr SwitchPage
 ; Unpack to Buffer
 ; A = low byte / Y = high byte of $9f-byte sysex message ($f0 - $f7)
 ; For the UnpSeed endpoint, prepare by setting P_RESULT
-UnpBuff:    ldx #<CURPRG        ; Set program buffer as result
+UnpBuff:    ldx #<CURVCE        ; Set program buffer as result
             stx P_RESULT
-            ldx #>CURPRG
+            ldx #>CURVCE
             stx P_RESULT+1
 UnpSeed:    sta P_START
             sta P_END
@@ -1937,12 +1944,12 @@ hdr_ok:     lda PTR
             sta P_RESULT
             lda PTR+1
             sta P_RESULT+1
-            lda #<CURPRG
+            lda #<CURVCE
             sta P_START
             clc
             adc #$80
             sta P_END
-            lda #>CURPRG
+            lda #>CURVCE
             sta P_START+1
             sta P_END+1
             jsr Pack
@@ -2108,7 +2115,7 @@ NRPNpre:    cpx LAST_NRPN       ; If the last field has changed again,
             ldy #UNDOS-2        ; Wants to be UNDOS-1, but there's an INY coming
 save_lev:   iny                 ; Move level pointer
             sty UNDO_LEV        ; ,,              
-            lda CURPRG,x        ; Get pre-change value
+            lda CURVCE,x        ; Get pre-change value
             sta UNDO_VAL,y      ; Store it in UNDO value list
             txa                 ; ,,
             sta UNDO_NRPN,y     ; Store NRPN number in value list
@@ -2143,7 +2150,7 @@ NRPNpost:   lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
             lda #%00100110      ; NRPN parameter value LSB CC
             jsr MIDIOUT         ; ,,
             ldx IX              ; Get the NRPN number
-            lda CURPRG,x        ; Get the value
+            lda CURVCE,x        ; Get the value
             and #$7f            ; Constrain for CC
             jsr MIDIOUT         ; ,,
 post_r:     rts
@@ -2170,7 +2177,7 @@ rest:       jsr NOTEON          ; Send Note On command
             rts
 
 ; Clear the sequence            
-ClearSeq:   ldy #63             ; Fill 64 bytes
+ClearSeq:   ldy #SEQS-1         ; Fill 64 bytes
             lda #0              ; With rests
 -loop:      sta SEQUENCE,y      ; ,,
             sta VELOCITY,y      ; ,,
@@ -2238,7 +2245,7 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             jsr ShowStep        ; Show step number and note name
             iny                 ; Increment the record index
             sty SEQ_REC_IX      ; ,,
-            cpy #64             ; Has it reached 64 notes (maximum)?
+            cpy #SEQS           ; Has it reached 64 notes (maximum)?
             bcc irq_r           ; If not, just return
             lda #0              ; Otherwise, reset the record index
             sta SEQ_REC_IX      ; ,,
@@ -2379,7 +2386,7 @@ Name:       ldy #21
             dey 
             bne loop
             lda #65             ; Offset for name location
-            ldy #>CURPRG        ; Current program location
+            ldy #>CURVCE        ; Current program location
             jmp WriteText
             
 ; Draw Enum Field - Retrigger
@@ -2624,7 +2631,7 @@ q_disp:     clc                 ; Add one for display (value is 1-indexed)
             asl                 ;   ,,
             ldy FIELD_IX        ; Store the weird value in the program buffer
             ldx FNRPN,y         ; Get the NRPN index
-            sta CURPRG,x        ; Store the value
+            sta CURVCE,x        ; Store the value
             rts
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2671,21 +2678,19 @@ Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
             .byte VOICESEND,CLEAR,COPY,RUN,REST,BACKSP,DSAVE,DLOAD
-            .byte PRGREQ,UNDO,HEX,DMERGE,DTHIS,0
+            .byte PRGREQ,UNDO,HEX,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceSend-1
             .byte <Erase-1,<CopyLib-1,<Sequencer-1,<AddRest-1,<DelNote-1
-            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1,<GoMerge-1,
-            .byte <GoVoice-1
+            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceSend-1
             .byte >Erase-1,>CopyLib-1,>Sequencer-1,>AddRest+1,>DelNote-1
-            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1,>GoMerge-1
-            .byte >GoVoice-1
+            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
@@ -2798,7 +2803,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98,51
-            ; These are not really NRPN numbers, but use the CURPRG storage
+            ; These are not really NRPN numbers, but use the CURVCE storage
             ; for menu settings
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Library View
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; ,,
@@ -2906,16 +2911,16 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
             .asc 5," - +  ",30," SELECT VOICE",CR
             .asc 5," CLR  ",30," ERASE VOICE",CR
-            .asc 5," P....",30," SET PROG #",CR
-            .asc 5," C....",30," COPY VOICE",CR
-            .asc 5," V....",30," SEND VOICE(S)",CR
-            .asc 5," Q....",30," REQUEST DATA",CR
-            .asc 5," G....",30," GENERATE VOICE",CR
-            .asc 5," L....",30," LOAD (",RVON,"M",RVOF,"ERGE)",CR
-            .asc 5," S....",30," SAVE (",RVON,"T",RVOF,"HIS)",CR
-            .asc 5," X....",30," HEX VIEW",CR
-            .asc 5," RUN  ",30," PLAY/STOP",CR
-            .asc 5," ",RVON,"C=",RVOF,"RUN",30," RECORD"
+            .asc 5," P    ",30," SET PROG #",CR
+            .asc 5," C    ",30," COPY VOICE",CR
+            .asc 5," V    ",30," SEND VOICE(S)",CR
+            .asc 5," Q    ",30," REQUEST DATA",CR
+            .asc 5," G    ",30," GENERATE VOICE",CR
+            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,"L",30," MERGE",CR
+            .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,"S",30," VOICE",CR
+            .asc 5," X    ",30," HEX VIEW",CR
+            .asc 5," RUN  ",30," SEQ PLAY/STOP",CR
+            .asc 5," ",RVON,"C=",RVOF,"RUN",30," SEQ RECORD"
             .asc 00
             
 View:       .asc 30,CR,"     LIBRARY VIEW",CR
@@ -2972,14 +2977,14 @@ LibraryL:   .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
             .byte $00,$a0,$40,$e0,$80,$20,$c0,$60 
             .byte $00,$a0,$40,$e0,$80,$20,$c0,$60
                                               
-LibraryH:   .byte $16,$16,$17,$17,$18,$19,$19,$1a
-            .byte $1b,$1b,$1c,$1c,$1d,$1e,$1e,$1f
-            .byte $20,$20,$21,$21,$22,$23,$23,$24
-            .byte $25,$25,$26,$26,$27,$28,$28,$29
-            .byte $2a,$2a,$2b,$2b,$2c,$2d,$2d,$2e
-            .byte $2f,$2f,$30,$30,$31,$32,$32,$33
-            .byte $34,$34,$35,$35,$36,$37,$37,$38
-            .byte $39,$39,$3a,$3a,$3b,$3c,$3c,$3d
+LibraryH:   .byte $14,$14,$15,$15,$16,$17,$17,$18
+            .byte $19,$19,$1a,$1a,$1b,$1c,$1c,$1d
+            .byte $1e,$1e,$1f,$1f,$20,$21,$21,$22
+            .byte $23,$23,$24,$24,$25,$26,$26,$27
+            .byte $28,$28,$29,$29,$2a,$2b,$2b,$2c
+            .byte $2d,$2d,$2e,$2e,$2f,$30,$30,$31
+            .byte $32,$32,$33,$33,$34,$35,$35,$36
+            .byte $37,$37,$38,$38,$39,$3a,$3a,$3b
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBMODULES
