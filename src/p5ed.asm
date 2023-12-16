@@ -28,6 +28,7 @@ Vectors:    .word Start         ; Start
 FPS         = 120               ; IRQs per second
 PROCSP      = 1020000           ; Processor speed in cycles per second
 IRQ_C       = PROCSP / FPS      ; IRQ countdown value
+UNDOS       = 32                ; Number of undo levels
 
 ; Application Memory
 ; In addition, zero page usage by
@@ -38,42 +39,44 @@ SYIN        = $02               ; Sysex In pointer (2 bytes)
 SYIN_IX     = $04               ; Sysex In position index
 PTR         = $05               ; Library pointer (2 bytes)
 PTRD        = $07               ; Destination pointer (2 bytes)
-FIELD_IX    = $09               ; Current field index
+FIELD_IX    = $0a               ; Current field index
+VIEW_START  = $0b               ; Library view start entry
+MERGE       = $0c               ; Merge flag (0=Load)
+SVOICE      = $0d               ; Single Voice flag (0=Save)
 PAGE        = $0e               ; Current page number
 CURLIB_IX   = $0f               ; Current library index
+REPEAT      = $10               ; Repeat speed
+KEYBUFF     = $11               ; Last key pressed
+IX          = $12               ; General use index
+PRGLOC      = $14               ; Program location screen codes (3 bytes)
+TGTLIB_IX   = $17               ; Target library index
+DISKLIB_IX  = $18               ; Disk library index
+P_RAND      = $19               ; Random number seed (2 bytes)
+S_GROUP     = $1b               ; Group search
+S_BANK      = $1c               ; Bank search
+DUMPTYPE    = $1d               ; Bit 7 set = Group, clear = Bank
+DEST10      = $1e               ; Tens digit of copy destination
+DEST1       = $1f               ; Ones digit of copy destination
+SEQ_XPORT   = $20               ; Sequence transport (bit0=rec, 7=play, 0=stop)
+SEQ_PLAY_IX = $21               ; Sequence play note index
+SEQ_COUNT   = $22               ; Sequence note countdown
+SEQ_LAST    = $23               ; Sequence last note played
+RANDOM      = $24               ; Random number for mutation
+DRAW_IX     = $25               ; Drawn field index
+VIEW_IX     = $26               ; Field index in Library View
+LAST_LIB_IX = $27               ; Last index in Library View
+UNDO_LEV    = $28               ; Current undo level
+LAST_NRPN   = $29               ; Last NRPN, used for keeping track of Undo
+STRIPE      = $2a               ; Mod 2 state for reverse ($80 when reversed)
+HALF_TEMPO  = $39               ; Time left before note off
 LISTEN      = $a0               ; Sysex listen flag (jiffy clock not used)
 READY       = $a1               ; Sysex ready flag (jiffy clock not used)
 ANYWHERE    = $a2               ; Temporary iterator (jiffy click not used)
 
-VIEW_START  = $033d             ; Library view start entry
-MERGE       = $033f             ; Merge flag
-SVOICE      = $0340             ; Single Voice flag
-REPEAT      = $0341             ; Repeat speed
-KEYBUFF     = $0342             ; Last key pressed
-IX          = $0343             ; General use index
-PRGLOC      = $0344             ; Program location screen codes (3 bytes)
-TGTLIB_IX   = $0347             ; Target library index
-DISKLIB_IX  = $0348             ; Disk library index
-P_RAND      = $0349             ; Random number seed (2 bytes)
-S_GROUP     = $034b             ; Group search
-S_BANK      = $034c             ; Bank search
-DUMPTYPE    = $034d             ; Bit 7 set = Group, clear = Bank
-DEST10      = $034e             ; Tens digit of copy destination
-DEST1       = $034f             ; Ones digit of copy destination
-SEQ_XPORT   = $0350             ; Sequence transport (bit0=rec, 7=play, 0=stop)
-SEQ_PLAY_IX = $0351             ; Sequence play note index
-SEQ_COUNT   = $0353             ; Sequence note countdown
-SEQ_LAST    = $0354             ; Sequence last note played
-RANDOM      = $0355             ; Random number for mutation
-FILENAME    = $0356             ; KERNAL filename ($0356-$0366)
-PROGNAME    = $0367             ; Unpacked program name ($0367-$037b)
-DRAW_IX     = $037d             ; Drawn field index
-VIEW_IX     = $037e             ; Field index in Library View
-LAST_LIB_IX = $037f             ; Last index in Library View
-UNDO_LEV    = $0380             ; Current undo level
-LAST_NRPN   = $0381             ; Last NRPN, used for keeping track of Undo
-STRIPE      = $0382             ; Mod 2 state for reverse ($80 when reversed)
-HALF_TEMPO  = $0383             ; Time left before note off
+FILENAME    = $033c             ; KERNAL filename ($033c-$034b)
+PROGNAME    = $034c             ; Unpacked program name ($034c-$0360)
+UNDO_NRPN   = $0370             ; NRPN for undo level (32 levels)
+UNDO_VAL    = UNDO_NRPN+UNDOS   ; Values for undo level
 
 MIDI_CH     = CURPRG+$a0        ; MIDI channel
 NRPN_TX     = CURPRG+$a1        ; NRPN Transmit toggle
@@ -92,8 +95,6 @@ SEED2       = $1280             ; Seed 2 program for generator
 CURPRG      = $1300             ; Current program indexed buffer (170 bytes)
 SEQUENCE    = $1400             ; Sequence note data (up to 64 steps)
 VELOCITY    = $1440             ; Sequence velocity data (up to 64 steps)
-UNDO_NRPN   = $1480             ; NRPN for undo level (64 bytes)
-UNDO_VAL    = $14c0             ; Value for undo level (64 bytes)
 LIBRARY     = $1600             ; Storage for 64 programs (160x64=10240 bytes)
 LIB_TOP     = LibraryH-LibraryL ; Number of library entries
 
@@ -700,11 +701,11 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
             sta CURPRG,x        ; Store it in the current program
             dec IX              ; Decrement the mutation count
             bne mutate          ; Go back for more
-no_mutate:  jsr SetLibPtr       ; ,,
-            jsr PackLib         ; Pack program data to library
+no_mutate:  jsr SetCurPtr       ; Pack program into library
+            jsr PackLib         ; ,,
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
-            jsr PopFields       ; Update the buffer fields in the interface
+            jsr SwitchPage      ; Update the fields in the interface
 gen_r:      jmp MainLoop
              
 ; Set Program Number
@@ -784,8 +785,7 @@ Erase:      jsr Popup
             jsr Keypress
             cmp #"Y"
             bne erase_r
-            ldy CURLIB_IX
-            jsr SetLibPtr
+            jsr SetCurPtr
             jsr NewLib
             lda PTR 
             ldy PTR+1
@@ -875,8 +875,7 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             sta PTRD            ;   copying
             lda PTR+1           ;   ,,
             sta PTRD+1          ;   ,,
-            ldy CURLIB_IX       ; Now set PTR to the current entry
-            jsr SetLibPtr       ; ,,
+            jsr SetCurPtr       ; Now set PTR to the current entry
             jsr PackLib         ; Pack program data to library prior to copy
             ldy #$9f            ; Perform the copy operation
 -loop:      lda (PTR),y         ; ,,
@@ -1089,6 +1088,7 @@ start_load: lda #0              ; Turn off KERNAL messages
             bcs disk_error      ; ,,
             ldx #2              ; CHKIN
             jsr CHKIN           ; ,,
+disk_err2:  bcs disk_error      ; ,,
             ldx #SM_LOADING
             jsr Status       
             bit MERGE           ; If Merge, start loading from current index
@@ -1097,8 +1097,7 @@ start_load: lda #0              ; Turn off KERNAL messages
             .byte $3c           ; Skip word (SKW)
 not_merge:  ldy #0              ; Initialize disk library index
             sty DISKLIB_IX      ; ,,
--next_rec:  ldy DISKLIB_IX      ; Get next library pointer
-            jsr SetLibPtr       ; ,,
+-next_rec:  jsr SetCurPtr       ; Get next library pointer
             ldy #0              ; Index within current message
 get_byte:   jsr READST
             bne eof
@@ -1122,12 +1121,13 @@ eorec:      ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
             lda #LIB_TOP        ;   If it's reached the library top,
             cmp DISKLIB_IX      ;   then act as though we're EOF 
             bne next_rec        ;   otherwise go back for another record
-eof:        lda #2
+eof:        and #$40            ; If this is a read error, show error message
+            beq disk_err2       ; ,,
+            lda #2
             jsr CLOSE
             jsr CLRCHN
-            ldy CURLIB_IX       ; Unpack current program into the edit buffer
-            jsr SetLibPtr       ;   after load, just in case it's changed
-            lda PTR             ;   ,,
+            jsr SetCurPtr       ; Unpack current program into the edit buffer
+            lda PTR             ;   after load, just in case it's changed
             ldy PTR+1           ;   ,,
             jsr UnpBuff         ;   ,,
             ; Fall through to disk ok
@@ -1140,9 +1140,8 @@ disk_canc:  jsr ShowPrgNum      ; Show program number
             jmp MainLoop        ; ,,
             
 ; Request Program
-Request:    ldy CURLIB_IX
+Request:    jsr SetCurPtr       ; Get pointer to sysex in library
             sty TGTLIB_IX       ; Want the requested program to go HERE
-            jsr SetLibPtr       ; Get pointer to sysex in library
             ldy #4              ; Cannot use the request for a library entry
             lda (PTR),y         ;   that already contains a program
             bmi req_c           ;   ,,
@@ -1793,9 +1792,8 @@ prstr_r:    rts
 ; Dump Single Program
 ; At the current library
 ; To dump another library, set PTR and call the DumpLib endpoint instead
-DumpPrg:    ldy CURLIB_IX
+DumpPrg:    jsr SetCurPtr
             sty IX              ; Store in temporary index for status message
-            jsr SetLibPtr
             jsr DumpLib
             jsr SwitchPage
             jmp MainLoop
@@ -1807,8 +1805,7 @@ DumpGroup:  sec                 ; Set DUMPTYPE flag to indicate group dump
 DumpBank:   clc                 ; Clear DUMPTYPE flag to indicate bank dump
             ror DUMPTYPE        ; ,,
             jsr Popup           ; Set up progress bar popup
-            ldy CURLIB_IX       ; Get the current program's bank number
-            jsr SetLibPtr       ;   ,,
+            jsr SetCurPtr       ; Get the current program's bank number
             ldy #4              ;   Get the group
             lda (PTR),y         ;   ,,
             sta S_GROUP         ;   and set it as the search group
@@ -1999,9 +1996,9 @@ send_r:     clc
 SelLib:     jsr Validate
             beq lib_good
             jsr NewLib
-lib_good:   ldy #$80            ; When a new program is selected, clear
+lib_good:   ldy #UNDOS          ; When a new program is selected, clear
             lda #0              ;   the Undo buffer
-            sta UNDO_LEV        ;   ,, and reset the undo level
+            sta UNDO_LEV,y      ;   ,, and reset the undo level
 -loop:      sta UNDO_NRPN,y     ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
@@ -2013,6 +2010,7 @@ lib_good:   ldy #$80            ; When a new program is selected, clear
             
 ; Set Library Pointer
 ; to entry index in Y
+SetCurPtr:  ldy CURLIB_IX       ; For this endpoint, use the current index
 SetLibPtr:  lda LibraryL,y      ; In case of soft reset, advance library
             sta PTR             ;   pointer to the last library entry
             lda LibraryH,y      ;   ,,
@@ -2097,17 +2095,17 @@ NRPNpre:    cpx LAST_NRPN       ; If the last field has changed again,
             bcs pre_r           ;   for Ed, do not create an Undo level
             stx LAST_NRPN       ; Store the last NRPN
             ldy UNDO_LEV        ; If there are undo levels remaining,
-            cpy #64             ; ,,
+            cpy #UNDOS-1        ; ,,
             bcc save_lev        ; ,, save a new level
-            ldy #1              ; If the level is at 64, then move
+            ldy #1              ; If the level is at max, then move
 -loop:      lda UNDO_NRPN,y     ;   the current levels down one,
             sta UNDO_NRPN-1,y   ;   resulting in the loss of the
             lda UNDO_VAL,y      ;   oldest undo level
             sta UNDO_VAL-1,y    ;   ,,
             iny
-            cpy #64             ;   ,,
+            cpy #UNDOS          ;   ,,
             bne loop            ;   ,,
-            ldy #63             ; Set index back to 63 for next instruction
+            ldy #UNDOS-2        ; Wants to be UNDOS-1, but there's an INY coming
 save_lev:   iny                 ; Move level pointer
             sty UNDO_LEV        ; ,,              
             lda CURPRG,x        ; Get pre-change value
@@ -2526,8 +2524,7 @@ prli_r:     rts
 ; For selected program voice sysex
 ShowHex:    ldy CURLIB_IX       ; Pack voice to sysex are before showing
             jsr PackLib         ; ,,
-            ldy CURLIB_IX       ; Set library pointer
-            jsr SetLibPtr       ; ,,
+            jsr SetCurPtr       ; ,,
             ldy #0
             ldx #10             ; X counts values to form a line
 -loop:      lda (PTR),y
@@ -2637,7 +2634,7 @@ q_disp:     clc                 ; Add one for display (value is 1-indexed)
 Failed:     .asc "    FAILED",0
 Received:   .asc "  RECEIVED",0
 Sent:       .asc "   SENT OK",0
-NotEmpty:   .asc " NOT EMPTY",0
+NotEmpty:   .asc " NOT UNSET",0
 Welcome:    .asc "H FOR HELP",0
 Generated:  .asc " GENERATED",0
 ClrStatus:  .asc "          ",0
