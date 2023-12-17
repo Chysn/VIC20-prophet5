@@ -896,16 +896,13 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
 -loop:      lda (PTR),y         ; ,,
             sta (PTRD),y        ; ,,
             dey                 ; ,,
-            cpy #$ff            ; ,,
+            cpy #$05            ; ,, (leave dest program number alone)
             bne loop            ; ,,
             bit SWAP            ; In Swap mode, leave program numbers alone
-            bmi cp_status       ; ,,
-            lda #$80            ; Set the copy's program number as unset
-            ldy #4              ; ,,
-            sta (PTRD),y        ; ,,
-            ldx #SM_COPIED      ; ,,
+            bpl cp_status       ; ,,
+            ldx #SM_SWAPPED     ; ,,
             .byte $3c           ; ,, Skip word (SKW)
-cp_status:  ldx #SM_SWAPPED     ; Indicate copy success
+cp_status:  ldx #SM_COPIED      ; Indicate copy success
             jsr Status          ; ,,
             bit SWAP            ; If swap is selcted, copy the destination sysex
             bpl copy_r          ;   into the existing record
@@ -913,7 +910,7 @@ cp_status:  ldx #SM_SWAPPED     ; Indicate copy success
 -loop:      lda TEMPBUFF,y      ;   ,,
             sta (PTR),y         ;   or not swap is actually selected.
             dey                 ;   ,,
-            cpy #$ff            ;   ,,
+            cpy #$05            ;   ,, (leave program numbers alone)
             bne loop            ;   ,,
             lda PTR             ; Unpack swapped voice into here
             ldy PTR+1           ; ,,
