@@ -16,7 +16,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CARTRIDGE LAUNCHER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-* = $6000
+* = $a000
 Vectors:    .word Start         ; Start
             .word NMISR         ; NMI Address
             .byte $41,$30,$c3,$c2,$cd  ; Uncomment for production
@@ -49,7 +49,6 @@ CURLIB_IX   = $0f               ; Current library index
 REPEAT      = $10               ; Repeat speed
 KEYBUFF     = $11               ; Last key pressed
 IX          = $12               ; General use index
-PRGLOC      = $14               ; Program location screen codes (3 bytes)
 TGTLIB_IX   = $17               ; Target library index
 DISKLIB_IX  = $18               ; Disk library index
 P_RAND      = $19               ; Random number seed (2 bytes)
@@ -70,9 +69,10 @@ UNDO_LEV    = $28               ; Current undo level
 LAST_NRPN   = $29               ; Last NRPN, used for keeping track of Undo
 STRIPE      = $2a               ; Mod 2 state for reverse ($80 when reversed)
 LAST_LIB_IX = $39               ; Last index in Library View (7 bytes)
-LISTEN      = $a0               ; Sysex listen flag (jiffy clock not used)
-READY       = $a1               ; Sysex ready flag (jiffy clock not used)
-ANYWHERE    = $a2               ; Temporary iterator (jiffy click not used)
+SWAP        = $40               ; Swap flag
+LISTEN      = $41               ; Sysex listen flag (jiffy clock not used)
+READY       = $42               ; Sysex ready flag (jiffy clock not used)
+ANYWHERE    = $43               ; Temporary iterator (jiffy click not used)
 
 ; Application settings
 MIDI_CH     = CURVCE+$a0        ; MIDI channel
@@ -121,6 +121,7 @@ SM_LOADING  = 9                 ; Load is in progress
 SM_OK       = 10                ; The operation was successful
 SM_UNDONE   = 11                ; Undo operation completed
 SM_ERASED   = 12                ; A voice has been erased
+SM_SWAPPED  = 13                ; Two voices are swapped
 
 ; Character Constants
 CR          = $0d               ; Carriage return PETSCII
@@ -229,7 +230,8 @@ HOME        = $e581             ; Home cursor
 CLSR        = $e55f             ; Clear screen
 SHIFT       = $028d             ; SHIFT key status
 VIAT        = $9114             ; VIA Timer (2 bytes)
-MSGFLG      = $9d               ; KERNAL message mode flag,
+MSGFLG      = $9d               ; KERNAL message mode flag
+REBOOT      = $fd22
 
 ; Disk KERNAL Calls
 SETLFS      = $ffba             ; Setup logical file
@@ -252,9 +254,11 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             jsr $fd52           ; Restore default I/O vectors
             jsr $fdf9           ; Initialize I/O registers
             jsr $e518           ; Initialize hardware
+            lda #$19            ; Set string descriptor pointer, to avoid            
+            sta $16             ;   conflicts with zero page addresses
 
             ; Some hardware settings
-            sei                 ; Disable interrupt; re-enabled at end of Start
+Reset:      sei                 ; Disable interrupt; re-enabled at end of Start
             jsr CLSR            ; Clear screen
             lda #$80            ; Disable Commodore-Shift
             sta CASECT          ; ,,            
@@ -266,13 +270,11 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             
             ; Initialize the library
             ldy #LIB_TOP        ; For all 80 locations
-            sty ANYWHERE        ; ,,
--loop:      ldy ANYWHERE        ; ,,
-            jsr Validate        ; ,, If it's valid, leave it alone (i.e,, from
-            beq lib_ok          ; ,, a reset button or something)
-            ldy ANYWHERE        ; ,,
-            jsr NewLib          ; ,, If it's invalid, create a new entry
-lib_ok:     dec ANYWHERE
+            sty IX              ; ,,
+-loop:      ldy IX              ; ,,
+            jsr SetLibPtr       ; ,,
+            jsr NewLib          ; ,, Create a new entry
+lib_ok:     dec IX
             bpl loop
             
             ; Set Interupts
@@ -302,7 +304,6 @@ lib_ok:     dec ANYWHERE
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta SEQ_REC_IX      ;   * Sequencer record index
             sta MUTATE          ;   * Generator mutation enable
-            sta MERGE           ;   * Disk merge flag
             lda #1              ;   * MIDI channel
             sta MIDI_CH         ;     ,,
             sta SEED1_PRG       ;   * Generator seed 1
@@ -710,16 +711,16 @@ SetPrg:     jsr Popup
             lda #<PrgLabel
             ldy #>PrgLabel
             jsr PrintStr
-            ldy CURLIB_IX       ; Get program location to PRGLOC
+            ldy CURLIB_IX       ; Get program location to TEMP_NAME
             jsr PrgLoc          ; ,,
             lda PTR             ; Unpack buffer prior to program # change
             ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
-            lda PRGLOC          ; Is the program name already set?
+            lda TEMP_NAME       ; Is the program name already set?
             cmp #"-"            ;   ,,
             beq is_unset        ;   ,, if not, start at beginning
             ldy #2              ; Set up editor with current program
--loop:      lda PRGLOC,y        ; ,,
+-loop:      lda TEMP_NAME,y     ; ,,
             sta WINDOW_ED,y     ; ,,
             dey                 ; ,,
             bpl loop            ; ,, 
@@ -796,10 +797,20 @@ erase_r2:   jmp MainLoop
 
 ; Copy the current voice
 ; to another location
-CopyVce:    jsr Popup
+
+GoCopy:     lda SHIFT           ; Check for Commodore key
+            cmp #2              ; ,,
+            bne just_copy       ; ,,
+            sec                 ; Perform swap if Commodore is pressed
+            ror SWAP            ; ,,
+just_copy:  jsr Popup
             lda #<CopyLabel
             ldy #>CopyLabel
-            jsr PrintStr
+            bit SWAP
+            bpl copy_lab
+            lda #<SwapLabel
+            ldy #>SwapLabel            
+copy_lab:   jsr PrintStr
             ldy #0              ; Set up editor for library number entry
             sty IX              ; ,, Set current cursor position
 cpos_cur:   lda #TXTCURSOR      ; ,, Add cursor at beginning
@@ -869,6 +880,12 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             cld                 ;   ,,
             dey                 ; Re-zero-index the library entry number
             jsr SetLibPtr       ; Set PTR to this library entry
+            ldy #$9e            ; Copy the selected entry into the temporary
+-loop:      lda (PTR),y         ;   buffer for swap. Yeah, this is done whether
+            sta TEMPBUFF,y      ;   or not swap is actually selected.
+            dey                 ;   ,,
+            cpy #$ff            ;   ,,
+            bne loop            ;   ,,
             lda PTR             ; Move PTR to the destination pointer for
             sta PTRD            ;   copying
             lda PTR+1           ;   ,,
@@ -881,13 +898,28 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             dey                 ; ,,
             cpy #$ff            ; ,,
             bne loop            ; ,,
+            bit SWAP            ; In Swap mode, leave program numbers alone
+            bmi cp_status       ; ,,
             lda #$80            ; Set the copy's program number as unset
             ldy #4              ; ,,
             sta (PTRD),y        ; ,,
-            ldx #SM_COPIED      ; Indicate copy success
+            ldx #SM_COPIED      ; ,,
+            .byte $3c           ; ,, Skip word (SKW)
+cp_status:  ldx #SM_SWAPPED     ; Indicate copy success
             jsr Status          ; ,,
-            jsr ShowPrgNum      ; Show program number, in case copy to same lib
-copy_r:     jsr SwitchPage
+            bit SWAP            ; If swap is selcted, copy the destination sysex
+            bpl copy_r          ;   into the existing record
+            ldy #$9e            ;   ,,
+-loop:      lda TEMPBUFF,y      ;   ,,
+            sta (PTR),y         ;   or not swap is actually selected.
+            dey                 ;   ,,
+            cpy #$ff            ;   ,,
+            bne loop            ;   ,,
+            lda PTR             ; Unpack swapped voice into here
+            ldy PTR+1           ; ,,
+            jsr UnpBuff         ; ,,
+copy_r:     jsr ShowPrgNum      ; Show program number, in case copy to same lib
+            jsr SwitchPage
             jmp MainLoop
 
 ; Sequencer control
@@ -1295,7 +1327,7 @@ max5:       cmp #"5"+1          ;   ,,
             ldy IX              ; Put this character into the program location
             cpy #3              ;   unless it's the 4th position
             bcs pgetkey         ;   ,,
-            sta PRGLOC,y        ;   ,,
+            sta TEMP_NAME,y     ;   ,,
             jsr PETtoScr        ; Convert to screen code for display
             ldy IX              ; ,,
             sta WINDOW_ED,y     ; ,,
@@ -1308,18 +1340,18 @@ pbacksp:    ldy IX
             beq pgetkey
             lda #" "
             sta WINDOW_ED,y
-            sta PRGLOC,y
+            sta TEMP_NAME,y
             dec IX
             jmp ppos_cur
 pdone:      ldy IX              ; If edit isn't complete, then do nothing
             cpy #3              ; ,,
             bne pgetkey         ; ,,
-            lda PRGLOC          ; Get the input numeral
+            lda TEMP_NAME          ; Get the input numeral
             sec                 ; Subtract 1, because group is zero-indexed
             sbc #1              ; ,,
             and #$07            ; Constrain to actual group number
             sta PTRD            ; Store in destination location
-            lda PRGLOC+1        ; Here's the bank number
+            lda TEMP_NAME+1        ; Here's the bank number
             sec                 ; Subtract 1, because bank is zero-indexed
             sbc #1              ; ,,
             and #$07            ; Constrain to a bank number
@@ -1327,7 +1359,7 @@ pdone:      ldy IX              ; If edit isn't complete, then do nothing
             asl                 ;   with the program number
             asl                 ;   ,,
             sta IX              ;   and store it temporarily
-            lda PRGLOC+2        ; Now the program number 
+            lda TEMP_NAME+2        ; Now the program number 
             sec                 ; Same stuff as above, yadda yadda yadda
             sbc #1              ; ,,
             and #$07            ; ,,
@@ -1354,9 +1386,10 @@ no_decinc:  clc
 
 ; Draw Edit Page
 ; at PAGE
-SwitchPage: lda #0              ; Clear merge and single voice flags
+SwitchPage: lda #0              ; Clear merge, single voice and swap flags
             sta MERGE           ; ,,
             sta SVOICE          ; ,,
+            sta SWAP            ; ,,
             jsr ClrScr
             jsr ClrCursor
             ldx PAGE            ; Acquire current page index
@@ -1406,10 +1439,13 @@ params:     ldy TopParamIX,x
 DrawCursor: ldy FIELD_IX 
             lda FRow,y
             jsr FieldRow
-            lda #CURSOR
             ldx #0
-            sta (FIELD,x)
-            lda FType,y         ; Color the field the selected color only
+            lda (FIELD,x)       ; If there's anything other than a space
+            cmp #" "            ;   here, then do not draw the cursor
+            bne dc_col          ;   ,,
+            lda #CURSOR
+            sta (FIELD,x)       ;   ,,
+dc_col:     lda FType,y         ; Color the field the selected color only
             cmp #F_SWITCH       ;   if it's a switch
             bne dc_r            ;   ,,
             jsr FieldColor      ;   ,,
@@ -1424,14 +1460,17 @@ Blank:
 ClrCursor:  ldy FIELD_IX        ; Remove the previous cursor
             lda FRow,y          ; ,,
             jsr FieldRow        ; ,,
-            lda #" "            ; ,,
             ldx #0              ; ,,
+            lda (FIELD,x)       ; If there's not a cursor to delete, then
+            cmp #CURSOR         ;   do not do anything
+            bne cc_col          ;   ,,
+            lda #" "            ; ,,
             sta (FIELD,x)       ; ,,
-            jsr FieldColor
+cc_col:     jsr FieldColor
             lda #PARCOL
             ldx #0
             sta (FIELD,x)
-            rts
+cc_r:       rts
    
 ; Draw Field by NRPN
 ; With NRPN supplied in A, if it's on the same edit page        
@@ -1546,7 +1585,7 @@ pi:         lda #$5E
             
 ; Clear Screen
 ; And color appropriately
-ClrScr:     ldx #231            ; Clear the entire screen, except for the
+ClrScr:     ldx #230            ; Clear the entire screen, except for the
 -loop:      lda #" "            ;   bottom 2 rows, which are used for status,
             sta SCREEN+22,x     ;   and the top row, used for the sequencer.
             sta SCREEN+231,x    ;   ,,
@@ -1608,7 +1647,7 @@ Status:     txa
 ShowPrgNum: ldy CURLIB_IX       ; Get current program number
             jsr PrgLoc          ; ,,
             ldy #2              ; Show received program number
--loop:      lda PRGLOC,y        ; ,,
+-loop:      lda TEMP_NAME,y        ; ,,
             sta STATUSDISP+2,y  ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
@@ -1635,7 +1674,7 @@ tensp:      ora #$30            ; A is the ones place at this point
                                                 
 ; Get Program Location
 ; For library entry in Y
-; For display. Sets 3 PRGLOC locations with group, bank, and program numbers
+; For display. Sets 3 TEMP_NAME locations with group, bank, and program numbers
 PrgLoc:     jsr Validate        ; Set library pointer and validate
             bne unset           ; Show unset location if not valid sysex
             ldy #4              ; Get group number
@@ -1647,26 +1686,26 @@ PrgLoc:     jsr Validate        ; Set library pointer and validate
             sbc #5              ;   ,,
 usergr:     clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta PRGLOC          ;   Set it to first digit
+            sta TEMP_NAME          ;   Set it to first digit
             iny
             lda (PTR),y         ; Get bank/program number
             pha
             and #$07            ; Isolate the program number
             clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta PRGLOC+2        ;   Set it to third digit
+            sta TEMP_NAME+2        ;   Set it to third digit
             pla
             lsr                 ; Isolate the bank number
             lsr                 ;   ,,
             lsr                 ;   ,,
             clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta PRGLOC+1        ;   Set it to second digit
+            sta TEMP_NAME+1        ;   Set it to second digit
             rts
 unset:      lda #"-"
-            sta PRGLOC
-            sta PRGLOC+1
-            sta PRGLOC+2
+            sta TEMP_NAME
+            sta TEMP_NAME+1
+            sta TEMP_NAME+2
             rts
             
 ; Configure Progress Bar
@@ -1674,7 +1713,10 @@ unset:      lda #"-"
 ; Once set up
 ;   LDA value
 ;   JSR ProgPopup
-ProgPopup:  ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
+ProgPopup:  ldx #$3a            ; Put indicators at beginning and end
+            stx PROGRESSBAR-1   ; ,,
+            stx PROGRESSBAR+8   ; ,,
+            ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
             stx FIELD           ;   VarBar
             ldx #>PROGRESSBAR   ;   ,,
             stx FIELD+1         ;   ,
@@ -2280,7 +2322,17 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             pha                 ;   ,,
             jsr CHKMIDI         ; Is this a MIDI-based interrupt?
             bne midi            ;   If so, handle MIDI input
-            jmp RFI             ; Back to normal NMI, after register saves
+            bit $9111           ; Read VIA to clear interrupt
+            lda SHIFT
+            cmp #3
+            bne ignore
+            pla 
+            pla 
+            pla 
+            pla
+            pla
+            jmp Reset
+ignore:     jmp RFI             ; Back to normal NMI, after register saves
 midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
@@ -2490,13 +2542,13 @@ pl_ok:      ldy VIEW_IX         ; Add the two-digit program number first
             ldy VIEW_IX         ; Get the Prophet 5 program number and
             jsr PrgLoc          ;   add that to the display line
             ldy #3              ;   ,,
-            lda PRGLOC          ;   ,,
+            lda TEMP_NAME          ;   ,,
             sta (FIELD),y       ;   ,,
             iny                 ;   ,,
-            lda PRGLOC+1        ;   ,,
+            lda TEMP_NAME+1        ;   ,,
             sta (FIELD),y       ;   ,,
             iny                 ;   ,,
-            lda PRGLOC+2        ;   ,,
+            lda TEMP_NAME+2        ;   ,,
             sta (FIELD),y       ;   ,,
             lda PTR
             sta P_START
@@ -2655,10 +2707,13 @@ Loading:    .asc "LOADING 00",0
 Success:    .asc "   SUCCESS",0
 Undone:     .asc "   UNDO 00",0
 Erased:     .asc "    ERASED",0
+Swapped:    .asc "   SWAPPED",0
 StatusL:    .byte <Failed,<Received,<Sent,<NotEmpty,<Welcome,<Generated
-            .byte <ClrStatus,<Copied,<Saving,<Loading,<Success,<Undone,<Erased
+            .byte <ClrStatus,<Copied,<Saving,<Loading,<Success,<Undone,<Erased,
+            .byte <Swapped
 StatusH:    .byte >Failed,>Received,>Sent,>NotEmpty,>Welcome,>Generated
-            .byte >ClrStatus,>Copied,>Saving,>Loading,>Success,>Undone,>Erased
+            .byte >ClrStatus,>Copied,>Saving,>Loading,>Success,>Undone,>Erased,
+            .byte >Swapped
 
 ; MIDI Messages and Headers
 EditBuffer: .byte $f0, $01, $32, $03, $ff
@@ -2688,13 +2743,13 @@ CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceSend-1
-            .byte <Erase-1,<CopyVce-1,<Sequencer-1,<AddRest-1,<DelNote-1
+            .byte <Erase-1,<GoCopy-1,<Sequencer-1,<AddRest-1,<DelNote-1
             .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceSend-1
-            .byte >Erase-1,>CopyVce-1,>Sequencer-1,>AddRest+1,>DelNote-1
+            .byte >Erase-1,>GoCopy-1,>Sequencer-1,>AddRest+1,>DelNote-1
             .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1
 
 ; Field type subroutine addresses
@@ -2760,7 +2815,7 @@ LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,6,8,9,10,11,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
-            .byte 1,2,3,4,7,8,9,10,11,12,13,14,15,16
+            .byte 0,1,2,3,6,7,8,9,10,11,12,13,14,15
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
             .byte 5,6,7,10,11,14,15,16
@@ -2874,7 +2929,6 @@ Edit2:      .asc 30,CR,"POLY-MOD",CR
             .asc 00
                         
 Edit3:      .asc 30,CR,"UNISON",CR
-            .asc RT,"ON",CR
             .asc RT,"RETRIGGER",CR
             .asc RT,"VOICE COUNT",CR
             .asc RT,"DETUNE",CR
@@ -2902,8 +2956,8 @@ Setup:      .asc 30,CR,"   ED FOR PROPHET 5",CR
             .asc RT,"STEPS",CR
             .asc RT,"TEMPO        ",RT,RT,RT," BPM",CR
             .asc CR,"GENERATION",CR
-            .asc RT,"SEED",CR
-            .asc RT,"SEED",CR
+            .asc RT,"SEED VOICE",CR
+            .asc RT,"SEED VOICE",CR
             .asc RT,"MUTATIONS"
             .asc 00
             
@@ -2912,12 +2966,12 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," F1-F7",30," EDIT PAGE",CR
             .asc 5," ",RVON,"C=",RVOF,"FN ",30," LIBRARY VIEW",CR
             .asc 5," CRSR ",30," SELECT PARAM",CR
-            .asc 5," < >  ",30," EDIT VALUE",CR
+            .asc 5," <  > ",30," EDIT VALUE",CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
-            .asc 5," - +  ",30," SELECT VOICE",CR
+            .asc 5," -  + ",30," SELECT VOICE",CR
             .asc 5," CLR  ",30," ERASE VOICE",CR
             .asc 5," P    ",30," SET PROG #",CR
-            .asc 5," C    ",30," COPY VOICE",CR
+            .asc 5," C    ",30," COPY ",5,RVON,"C=",RVOF,"C",30," SWAP",CR
             .asc 5," V    ",30," SEND VOICE(S)",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
             .asc 5," G    ",30," GENERATE VOICE",CR
@@ -2970,6 +3024,7 @@ EraseConf:  .asc 5,"ERASE VOICE",CR,CR
             .asc RT,RT,RT,RT,RT,"SURE? (Y/N)",CR
             .asc 30,0
 CopyLabel:  .asc 5,"COPY TO",30,0
+SwapLabel:  .asc 5,"SWAP WITH",30,0
                          
 ; Library Sysex Pointers
 ; Indexed             
