@@ -84,11 +84,11 @@ MUTATE      = CURVCE+$a7        ; Mutate flag
 SEQ_REC_IX  = CURVCE+$a8        ; Sequence record index
 
 ; Application Data Storage
-TEMP_NAME   = $033c             ; Name storage. Filename, voice name (20 bytes)
 UNDO_NRPN   = $02a2             ; NRPN for undo level (32 levels)
 UNDO_VAL    = UNDO_NRPN+UNDOS   ; Values for undo level
 SEQUENCE    = $033c             ; Sequence note data (up to 64 steps)
-VELOCITY    = $033c+SEQS        ; Sequence velocity data (up to 64 steps)
+VELOCITY    = SEQUENCE+SEQS     ; Sequence velocity data (up to 64 steps)
+TEMPNAME    = VELOCITY+SEQS     ; Name storage. Filename, voice name (20 bytes)
 TEMPBUFF    = $1200             ; Outgoing sysex stage (256 bytes)
 SEED1       = $1200             ; Seed 1 program for generator
 SEED2       = $1280             ; Seed 2 program for generator
@@ -320,7 +320,6 @@ lib_ok:     dec IX
             jsr SelLib          ; ,,
             ldx #SM_WELCOME     ; Show welcome message in status bar
             jsr Status          ; ,,
-            jsr ShowPrgNum      ; Show program number
             jsr SwitchPage      ; Generate the edit page
             cli                 ; Start interrupt            
             ; Fall through to MainLoop
@@ -364,7 +363,6 @@ SysexReady: lda #0              ; Clear the sysex ready flag
             bne SysexFail       ; ,,
             ldx #SM_RECV        ; Show received success status
             jsr Status          ; ,,
-            jsr ShowPrgNum      ; Add Program Number to the status
             lda PTR             ; PTR was set above by Validate. Use it to
             ldy PTR+1           ;   unpack the sysex to the buffer
             jsr UnpBuff         ;   ,,
@@ -403,7 +401,6 @@ switchlib:  jsr ClrCursor
             ldy CURLIB_IX
             sty TGTLIB_IX
             jsr SelLib
-            jsr ShowPrgNum
             jsr PopFields
             ldx #SM_BLANK
             jsr Status
@@ -483,7 +480,6 @@ LibView:    tay                 ; Get library division for this key
             sty CURLIB_IX       ; ,,
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
-            jsr ShowPrgNum      ; ,,
             jsr PopFields       ; ,,            
             jsr SwitchPage      ; Draw the page header
             jmp MainLoop
@@ -580,8 +576,6 @@ sel_prog:   tya                 ; Field index
             sta CURLIB_IX       ; ...Equals the new current program index
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
-            ldy CURLIB_IX       ; Show program number
-            jsr ShowPrgNum      ; ,,
             lda #0              ; Drill down to edit page
             sta PAGE            ; ,,
             jsr SwitchPage      ; ,,
@@ -704,8 +698,7 @@ gen_r:      jmp MainLoop
              
 ; Set Program Number
 ; for current program buffer                    
-SetPrg:     jsr Popup
-            ldy CURLIB_IX       ; Get program location to TEMP_NAME
+SetPrg:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
             lda PTR             ; Unpack buffer prior to program # change
             ldy PTR+1           ; ,,
@@ -714,14 +707,15 @@ SetPrg:     jsr Popup
             cmp #2              ;   instead of setting one program number
             bne set_prg         ;   ,,
             jmp SetGrp          ;   ,,
-set_prg:    lda #<PrgLabel
+set_prg:    jsr Popup
+            lda #<PrgLabel
             ldy #>PrgLabel
             jsr PrintStr
-            lda TEMP_NAME       ; Is the program name already set?
+            lda TEMPNAME        ; Is the program name already set?
             cmp #"-"            ;   ,,
             beq is_unset        ;   ,, if not, start at beginning
             ldy #2              ; Set up editor with current program
--loop:      lda TEMP_NAME,y     ; ,,
+-loop:      lda TEMPNAME,y      ; ,,
             sta WINDOW_ED,y     ; ,,
             dey                 ; ,,
             bpl loop            ; ,, 
@@ -736,20 +730,22 @@ is_unset:   ldy #0              ; Cursor position in edit field
             iny                 ;   ,,
             lda PTRD+1          ;   ,,
             sta (PTR),y         ;   ,,
-            jsr ShowPrgNum      ;   ,,
 setp_r:     jsr SwitchPage      ; Housekeeping. Redraw the page.
             jmp MainLoop
             
 ; Change      
-SetGrp:     ldy CURLIB_IX       ; Get program location to TEMP_NAME
+SetGrp:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
-            lda TEMP_NAME       ; Is the group set?
+            lda TEMPNAME        ; Is the group set?
             cmp #"-"            ; ,,
             bne set_group       ; ,, If not, show an error
             ldx #SM_NOGROUP     ; ,,
             jsr Status          ; ,,
-            jmp setp_r          ; ,, and return
-set_group:  sta SCREEN+232      ; Show original group number on screen
+            jmp MainLoop
+set_group:  pha
+            jsr Popup
+            pla
+            sta SCREEN+232      ; Show original group number on screen
             lda #<GrpLabel      ; Show label
             ldy #>GrpLabel      ; ,,
             jsr PrintStr        ; ,,
@@ -783,7 +779,7 @@ grp_bksp:   lda IX              ; If already at the start, cannot backspace
 grp_done:   lda IX              ; If no group was entered, go back for more
             beq grp_key         ; ,,
             lda WINDOW_ED       ; If there's no change to the group, go  
-            cmp TEMP_NAME       ;   back for more
+            cmp TEMPNAME        ;   back for more
             beq grp_key         ;   ,,
             eor #$30            ; Remove the screen code and leave the number
             sec                 ; Zero-index the group number 
@@ -810,7 +806,6 @@ gs_next:    ldy IX
             ldx #SM_OK          ; Show success status
             jsr Status          ; ,,
 setgrp_r:   jsr SwitchPage
-            jsr ShowPrgNum      ; Show new program number            
             jmp MainLoop
             
 ; System Exclusive Voice Dump
@@ -861,7 +856,6 @@ Erase:      jsr Popup
             lda PTR 
             ldy PTR+1
             jsr UnpBuff 
-            jsr ShowPrgNum
             ldx #SM_ERASED
             .byte $3c           ; Skip word (SKW)
 erase_r:    ldx #SM_BLANK
@@ -989,8 +983,7 @@ cp_status:  ldx #SM_COPIED      ; Indicate copy success
             lda PTR             ; Unpack swapped voice into here
             ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
-copy_r:     jsr ShowPrgNum      ; Show program number, in case copy to same lib
-            jsr SwitchPage
+copy_r:     jsr SwitchPage
             jmp MainLoop
 
 ; Sequencer control
@@ -1100,8 +1093,8 @@ prompt:     jsr SetName         ; Get user name input
 start_save: lda #0              ; Turn off KERNAL messages
             sta MSGFLG          ; ,,
             tya                 ; Length of name for SETNAM call
-            ldx #<TEMP_NAME     ; Pointer to name (low)
-            ldy #>TEMP_NAME     ; Pointer to name (high)
+            ldx #<TEMPNAME      ; Pointer to name (low)
+            ldy #>TEMPNAME      ; Pointer to name (high)
             jsr SETNAM          ; Call SETNAM            
             jsr StopSeq         ; Stop sequence if name OK
             ldx DEVICE_NUM      ; Set up LFS. Device number
@@ -1179,8 +1172,8 @@ start_load: lda #0              ; Turn off KERNAL messages
             tya                 ; Length of name for SETNAM call
             sec                 ; Subtract the ",P,W" from the filename
             sbc #4              ; ,,
-            ldx #<TEMP_NAME     ; Pointer to name (low)
-            ldy #>TEMP_NAME     ; Pointer to name (high)
+            ldx #<TEMPNAME      ; Pointer to name (low)
+            ldy #>TEMPNAME      ; Pointer to name (high)
             jsr SETNAM          ; Call SETNAM       
             jsr StopSeq         ; Stop sequence if name OK   
             ldx DEVICE_NUM      ; Device number
@@ -1245,8 +1238,7 @@ eof:        and #$40            ; If this is a read error, show error message
             ; Shared exit points for both save and load
 disk_ok:    ldx #SM_OK          ; Show success message
             jsr Status          ; ,,
-disk_canc:  jsr ShowPrgNum      ; Show program number
-            jsr SwitchPage      ; Back to main
+disk_canc:  jsr SwitchPage      ; Back to main
             jmp MainLoop        ; ,,
             
 ; Request Program
@@ -1340,7 +1332,7 @@ fch_bk:     cpy #BACKSP         ; Has backspace been pressed?
             ldy IX              ; ,,
             cpy #8              ; Limit size of filename
             bcs fgetkey         ; ,,
-            sta TEMP_NAME,y     ; Store PETSCII in name storage
+            sta TEMPNAME,y      ; Store PETSCII in name storage
             jsr PETtoScr        ; Convert to screen code for display
             ldy IX              ; ,,
             sta WINDOW_ED,y     ; ,,
@@ -1355,7 +1347,7 @@ fbacksp:    ldy IX
             beq fgetkey
             lda #" "
             sta WINDOW_ED,y
-            sta TEMP_NAME,y
+            sta TEMPNAME,y
             dec IX
             jmp fpos_cur
 fdone:      ldy IX
@@ -1363,7 +1355,7 @@ fdone:      ldy IX
             beq fgetkey         ; ,,
             ldx #0
 -loop:      lda SyxExt,x
-            sta TEMP_NAME,y
+            sta TEMPNAME,y
             iny
             inx
             cpx #8
@@ -1396,7 +1388,7 @@ max5:       cmp #"5"+1          ;   ,,
             ldy IX              ; Put this character into the program location
             cpy #3              ;   unless it's the 4th position
             bcs pgetkey         ;   ,,
-            sta TEMP_NAME,y     ;   ,,
+            sta TEMPNAME,y      ;   ,,
             jsr PETtoScr        ; Convert to screen code for display
             ldy IX              ; ,,
             sta WINDOW_ED,y     ; ,,
@@ -1409,18 +1401,18 @@ pbacksp:    ldy IX
             beq pgetkey
             lda #" "
             sta WINDOW_ED,y
-            sta TEMP_NAME,y
+            sta TEMPNAME,y
             dec IX
             jmp ppos_cur
 pdone:      ldy IX              ; If edit isn't complete, then do nothing
             cpy #3              ; ,,
             bne pgetkey         ; ,,
-            lda TEMP_NAME          ; Get the input numeral
+            lda TEMPNAME           ; Get the input numeral
             sec                 ; Subtract 1, because group is zero-indexed
             sbc #1              ; ,,
             and #$07            ; Constrain to actual group number
             sta PTRD            ; Store in destination location
-            lda TEMP_NAME+1        ; Here's the bank number
+            lda TEMPNAME+1      ; Here's the bank number
             sec                 ; Subtract 1, because bank is zero-indexed
             sbc #1              ; ,,
             and #$07            ; Constrain to a bank number
@@ -1428,7 +1420,7 @@ pdone:      ldy IX              ; If edit isn't complete, then do nothing
             asl                 ;   with the program number
             asl                 ;   ,,
             sta IX              ;   and store it temporarily
-            lda TEMP_NAME+2        ; Now the program number 
+            lda TEMPNAME+2      ; Now the program number 
             sec                 ; Same stuff as above, yadda yadda yadda
             sbc #1              ; ,,
             and #$07            ; ,,
@@ -1493,12 +1485,22 @@ pf_prg:     ldy CURLIB_IX       ; Get current library entry
 params:     ldy TopParamIX,x
 -loop:      lda FPage,y         ; Get the page number of the field
             cmp PAGE            ; Is the next field on the current page? 
-            bne DrawCursor      ; If not, then fields are done
+            bne ShowPrgNum      ; If not, then fields are done
             sty DRAW_IX         ; Drawn field index
             jsr DrawField       ; Draw the field
             ldy DRAW_IX         ; Bring back Y as iterator
             iny                 ; Increment the field number
             bpl loop            ; Move to the next field
+            ; Fall through to ShowPrgNum
+            
+; Show Current Program Number
+ShowPrgNum: ldy CURLIB_IX       ; Get current program number
+            jsr PrgLoc          ; ,,
+            ldy #2              ; Show program number or unset (---)
+-loop:      lda TEMPNAME,y      ; ,,
+            sta STATUSDISP+2,y  ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
             ; Fall through to DrawCursor
 
 ; Draw Cursor
@@ -1663,7 +1665,7 @@ ClrScr:     ldx #230            ; Clear the entire screen, except for the
             cpx #$ff            ;   ,,
             bne loop            ;   ,,
             lda #<COLOR         ; Set margin cursor to the select color
-            sta PTRD             ; ,,
+            sta PTRD            ; ,,
             lda #>COLOR         ; ,,
             sta PTRD+1          ; ,,
             ldy #22             ; ,,
@@ -1710,16 +1712,6 @@ Status:     txa
             tax
             rts
 
-; Show Current Program Number
-ShowPrgNum: ldy CURLIB_IX       ; Get current program number
-            jsr PrgLoc          ; ,,
-            ldy #2              ; Show received program number
--loop:      lda TEMP_NAME,y        ; ,,
-            sta STATUSDISP+2,y  ; ,,
-            dey                 ; ,,
-            bpl loop            ; ,,
-            rts
-
 ; Get two-digit number
 ; In Y
 ; X is tens place, A is ones place PETSCII/screen code
@@ -1741,7 +1733,7 @@ tensp:      ora #$30            ; A is the ones place at this point
                                                 
 ; Get Program Location
 ; For library entry in Y
-; For display. Sets 3 TEMP_NAME locations with group, bank, and program numbers
+; For display. Sets 3 TEMPNAME  locations with group, bank, and program numbers
 PrgLoc:     jsr Validate        ; Set library pointer and validate
             bne unset           ; Show unset location if not valid sysex
             ldy #4              ; Get group number
@@ -1753,26 +1745,26 @@ PrgLoc:     jsr Validate        ; Set library pointer and validate
             sbc #5              ;   ,,
 usergr:     clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta TEMP_NAME       ;   Set it to first digit
+            sta TEMPNAME        ;   Set it to first digit
             iny
             lda (PTR),y         ; Get bank/program number
             pha
             and #$07            ; Isolate the program number
             clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta TEMP_NAME+2     ;   Set it to third digit
+            sta TEMPNAME+2      ;   Set it to third digit
             pla
             lsr                 ; Isolate the bank number
             lsr                 ;   ,,
             lsr                 ;   ,,
             clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta TEMP_NAME+1     ;   Set it to second digit
+            sta TEMPNAME+1      ;   Set it to second digit
             rts
 unset:      lda #"-"
-            sta TEMP_NAME
-            sta TEMP_NAME+1
-            sta TEMP_NAME+2
+            sta TEMPNAME 
+            sta TEMPNAME+1
+            sta TEMPNAME+2
             rts
             
 ; Configure Progress Bar
@@ -1847,7 +1839,6 @@ LibViewF:   lda PAGE            ; Are we on the Library View?
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
-            jsr ShowPrgNum      ; ,,
             jsr PopFields       ; ,,
 lvf_r:      rts
 
@@ -2615,13 +2606,13 @@ pl_ok:      ldy VIEW_IX         ; Add the two-digit program number first
             ldy VIEW_IX         ; Get the Prophet 5 program number and
             jsr PrgLoc          ;   add that to the display line
             ldy #3              ;   ,,
-            lda TEMP_NAME          ;   ,,
+            lda TEMPNAME        ;   ,,
             sta (FIELD),y       ;   ,,
             iny                 ;   ,,
-            lda TEMP_NAME+1        ;   ,,
+            lda TEMPNAME+1      ;   ,,
             sta (FIELD),y       ;   ,,
             iny                 ;   ,,
-            lda TEMP_NAME+2        ;   ,,
+            lda TEMPNAME+2      ;   ,,
             sta (FIELD),y       ;   ,,
             lda PTR
             sta P_START
@@ -2641,14 +2632,14 @@ pl_nc1:     lda #$67
             sta P_END
             bcc pl_nc2
             inc P_END+1
-pl_nc2:     lda #<TEMP_NAME
+pl_nc2:     lda #<TEMPNAME 
             sta P_RESULT
-            lda #>TEMP_NAME+1
+            lda #>TEMPNAME +1
             sta P_RESULT+1
             jsr Unpack
             ldx #2
             ldy #7
--loop:      lda TEMP_NAME,x
+-loop:      lda TEMPNAME,x
             beq prli_r
             jsr PETtoScr
             sta (FIELD),y
@@ -2871,14 +2862,14 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     31,     47,     61,    77,       78,     86
+TopParamIX: .byte 0,      17,     32,     48,     61,    77,       78,     86
 
 ; Field data
 ; Field page number (0-3)
 FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-            .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3
+            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
             .byte 5
             .byte 6,6,6,6,6,6,6,6
@@ -2887,9 +2878,9 @@ LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
 ; Field row
 FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
-            .byte 1,2,3,4,5,6,8,9,10,11,14,15,16,17
+            .byte 1,2,3,4,5,6,7,8,9,10,13,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
-            .byte 0,1,2,3,6,7,8,9,10,11,12,13,14,15
+            .byte 0,1,2,3,6,7,8,9,10,11,12,13,14
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
             .byte 5,6,7,10,11,14,15,16
@@ -2897,9 +2888,9 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
 
 ; Field column
 FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
-            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14 
+            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
-            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14
+            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 1
             .byte 14,14,14,14,14,14,14,14
@@ -2912,14 +2903,14 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             
             .byte F_VALUE,F_VALUE,F_VALUE,F_TRACK,F_FILTER,F_QCOMP
             .byte F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE,F_VALUE
-            .byte F_VALUE
+            .byte F_VALUE,F_SWITCH
             
             .byte F_VALUE,F_VALUE,F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_VALUE
             .byte F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_SWITCH,F_SWITCH
             
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
-            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE
+            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_VALUE
             .byte F_SWITCH,F_SWITCH,F_VALUE
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
@@ -2934,11 +2925,11 @@ TEMPO_FLD:  .byte F_TEMPO,F_64,F_64,F_MUTATIONS
             
 ; Field NRPN number
 FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
-            .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50
+            .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50,51
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
-            .byte 52,87,53,54,13,37,86,51,41,42,97,38,39,98
-            ; These are not really NRPN numbers, but use the CURVCE storage
-            ; for menu settings
+            .byte 52,87,53,54,13,37,86,41,42,97,38,39,98
+            ; The following are not really NRPN numbers, but use the CURVCE
+            ; storage for menu settings
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Library View
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; ,,
             .byte $ff
@@ -2972,7 +2963,7 @@ Edit1:      .asc 30,CR,"FILTER",CR
             .asc RT,"KEYBOARD",CR
             .asc RT,"REV",CR
             .asc RT,"Q COMP",CR
-            .asc CR,RT,"ATTACK",CR
+            .asc RT,"ATTACK",CR
             .asc RT,"DECAY",CR
             .asc RT,"SUSTAIN",CR
             .asc RT,"RELEASE",CR
@@ -2980,7 +2971,8 @@ Edit1:      .asc 30,CR,"FILTER",CR
             .asc RT,"ATTACK",CR
             .asc RT,"DECAY",CR
             .asc RT,"SUSTAIN",CR
-            .asc RT,"RELEASE"
+            .asc RT,"RELEASE",CR
+            .asc RT,"RELEASE/HOLD",CR
             .asc 00
             
 Edit2:      .asc 30,CR,"POLY-MOD",CR
@@ -3010,7 +3002,6 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"GLIDE RATE",CR
             .asc RT,"VINTAGE",CR
             .asc RT,"WHEEL RANGE",CR
-            .asc RT,"RELEASE/HOLD",CR
             .asc RT,"VEL  >FILTER",CR
             .asc RT,TL,TL,TL,"  >AMP",CR
             .asc RT,"     AMT",CR
@@ -3105,8 +3096,10 @@ SendMenu2:  .asc 5,"SEND VOICE",CR,CR
 EraseConf:  .asc 5,"ERASE VOICE",CR,CR
             .asc RT,RT,RT,RT,RT,"SURE? (Y/N)",CR
             .asc 30,0
-CopyLabel:  .asc 5,"COPY TO",30,0
-SwapLabel:  .asc 5,"SWAP WITH",30,0
+CopyLabel:  .asc 5,"COPY TO",CR
+            .asc RT,RT,RT,RT,RT,"VOICE",30,0
+SwapLabel:  .asc 5,"SWAP WITH",CR
+            .asc RT,RT,RT,RT,RT,"VOICE",30,0
                          
 ; Library Sysex Pointers
 ; Indexed             
