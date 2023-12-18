@@ -42,8 +42,7 @@ PTR         = $05               ; Library pointer (2 bytes)
 PTRD        = $07               ; Destination pointer (2 bytes)
 FIELD_IX    = $0a               ; Current field index
 VIEW_START  = $0b               ; Library view start entry
-MERGE       = $0c               ; Merge flag (0=Load)
-SVOICE      = $0d               ; Single Voice flag (0=Save)
+COMMODORE   = $0c               ; Commodore key flag (merge, swap, etc.)
 PAGE        = $0e               ; Current page number
 CURLIB_IX   = $0f               ; Current library index
 REPEAT      = $10               ; Repeat speed
@@ -69,7 +68,6 @@ UNDO_LEV    = $28               ; Current undo level
 LAST_NRPN   = $29               ; Last NRPN, used for keeping track of Undo
 STRIPE      = $2a               ; Mod 2 state for reverse ($80 when reversed)
 LAST_LIB_IX = $39               ; Last index in Library View (7 bytes)
-SWAP        = $40               ; Swap flag
 LISTEN      = $41               ; Sysex listen flag (jiffy clock not used)
 READY       = $42               ; Sysex ready flag (jiffy clock not used)
 ANYWHERE    = $43               ; Temporary iterator (jiffy click not used)
@@ -122,6 +120,7 @@ SM_OK       = 10                ; The operation was successful
 SM_UNDONE   = 11                ; Undo operation completed
 SM_ERASED   = 12                ; A voice has been erased
 SM_SWAPPED  = 13                ; Two voices are swapped
+SM_NOGROUP  = 14                ; Group is not set
 
 ; Character Constants
 CR          = $0d               ; Carriage return PETSCII
@@ -214,8 +213,6 @@ F_TEMPO     = 17                ; Tempo in BPM
 F_QCOMP     = 18                ; Q Compensation
 
 ; System Resources
-;NMIR        = $ff56             ; Return from NMI for production
-NMIR        = $feb2             ; Return from NMI for dev
 CINV        = $0314             ; ISR vector
 NMINV       = $0318             ; Release NMI vector
 ;-NMINV     = $fffe             ; Development NMI non-vector (uncomment for dev)
@@ -304,8 +301,8 @@ lib_ok:     dec IX
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta SEQ_REC_IX      ;   * Sequencer record index
             sta MUTATE          ;   * Generator mutation enable
-            lda #1              ;   * MIDI channel
-            sta MIDI_CH         ;     ,,
+            sta MIDI_CH         ;   * MIDI Channel
+            lda #1              ;
             sta SEED1_PRG       ;   * Generator seed 1
             lda #8              ;   * Device Number
             sta DEVICE_NUM      ;     ,,
@@ -708,14 +705,18 @@ gen_r:      jmp MainLoop
 ; Set Program Number
 ; for current program buffer                    
 SetPrg:     jsr Popup
-            lda #<PrgLabel
-            ldy #>PrgLabel
-            jsr PrintStr
             ldy CURLIB_IX       ; Get program location to TEMP_NAME
             jsr PrgLoc          ; ,,
             lda PTR             ; Unpack buffer prior to program # change
             ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
+            lda SHIFT           ; If COMMODORE is held, change all groups
+            cmp #2              ;   instead of setting one program number
+            bne set_prg         ;   ,,
+            jmp SetGrp          ;   ,,
+set_prg:    lda #<PrgLabel
+            ldy #>PrgLabel
+            jsr PrintStr
             lda TEMP_NAME       ; Is the program name already set?
             cmp #"-"            ;   ,,
             beq is_unset        ;   ,, if not, start at beginning
@@ -737,6 +738,79 @@ is_unset:   ldy #0              ; Cursor position in edit field
             sta (PTR),y         ;   ,,
             jsr ShowPrgNum      ;   ,,
 setp_r:     jsr SwitchPage      ; Housekeeping. Redraw the page.
+            jmp MainLoop
+            
+; Change      
+SetGrp:     ldy CURLIB_IX       ; Get program location to TEMP_NAME
+            jsr PrgLoc          ; ,,
+            lda TEMP_NAME       ; Is the group set?
+            cmp #"-"            ; ,,
+            bne set_group       ; ,, If not, show an error
+            ldx #SM_NOGROUP     ; ,,
+            jsr Status          ; ,,
+            jmp setp_r          ; ,, and return
+set_group:  sta SCREEN+232      ; Show original group number on screen
+            lda #<GrpLabel      ; Show label
+            ldy #>GrpLabel      ; ,,
+            jsr PrintStr        ; ,,
+grp_cur:    ldy #0              ; Set index for cursor
+            sty IX              ; ,,
+            lda #TXTCURSOR      ; Draw cusror
+            sta WINDOW_ED,y     ; ,,
+grp_key:    jsr Keypress        ; Wait for keypress
+            cpy #CANCEL         ; If cancel, return
+            beq setgrp_r        ; ,,
+            cpy #BACKSP         ; If backspace, remove set number
+            beq grp_bksp        ; 
+            cpy #EDIT           ; If RETURN, submit
+            beq grp_done        ; ,,
+            cmp #"1"            ; If less than one
+            bcc grp_key         ;   ,,
+            cmp #"5"+1          ;   or greater than five
+            bcs grp_key         ;   go back for another key
+            ldy IX              ; Or if there's already a group number
+            bne grp_key         ;   go back
+            sta WINDOW_ED       ;
+            lda #TXTCURSOR      ; Move the cursor
+            sta WINDOW_ED+1     ; ,,
+            inc IX              ; ,,
+            jmp grp_key 
+grp_bksp:   lda IX              ; If already at the start, cannot backspace
+            beq grp_key         ; ,,
+            lda #" "            ; Remove the entered character
+            sta WINDOW_ED+1     ; ,,
+            jmp grp_cur         ; ,,
+grp_done:   lda IX              ; If no group was entered, go back for more
+            beq grp_key         ; ,,
+            lda WINDOW_ED       ; If there's no change to the group, go  
+            cmp TEMP_NAME       ;   back for more
+            beq grp_key         ;   ,,
+            eor #$30            ; Remove the screen code and leave the number
+            sec                 ; Zero-index the group number 
+            sbc #1              ; ,,
+            sta ANYWHERE        ; Store the new (target) group
+            jsr SetCurPtr       ; From the current library,
+            ldy #4              ;   get the group for which to search
+            lda (PTR),y         ;   ,,
+            sta S_GROUP         ;   ,,
+            ldy #0              ; Go through each program, looking for the
+-loop:      sty IX              ;   
+            ldy IX
+            jsr SetLibPtr
+            ldy #4              ; Group number sysex byte
+            lda (PTR),y         ; ,,
+            cmp S_GROUP         ; ,,
+            bne gs_next         ; ,, If no match, go to the next program
+            lda ANYWHERE        ; If matches, change group number in the
+            sta (PTR),y         ;   sysex
+gs_next:    ldy IX
+            iny
+            cpy #LIB_TOP
+            bne loop
+            ldx #SM_OK          ; Show success status
+            jsr Status          ; ,,
+setgrp_r:   jsr SwitchPage
+            jsr ShowPrgNum      ; Show new program number            
             jmp MainLoop
             
 ; System Exclusive Voice Dump
@@ -802,11 +876,11 @@ GoCopy:     lda SHIFT           ; Check for Commodore key
             cmp #2              ; ,,
             bne just_copy       ; ,,
             sec                 ; Perform swap if Commodore is pressed
-            ror SWAP            ; ,,
+            ror COMMODORE       ; ,,
 just_copy:  jsr Popup
             lda #<CopyLabel
             ldy #>CopyLabel
-            bit SWAP
+            bit COMMODORE
             bpl copy_lab
             lda #<SwapLabel
             ldy #>SwapLabel            
@@ -898,13 +972,13 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             dey                 ; ,,
             cpy #$05            ; ,, (leave dest program number alone)
             bne loop            ; ,,
-            bit SWAP            ; In Swap mode, leave program numbers alone
+            bit COMMODORE       ; In Swap mode, leave program numbers alone
             bpl cp_status       ; ,,
             ldx #SM_SWAPPED     ; ,,
             .byte $3c           ; ,, Skip word (SKW)
 cp_status:  ldx #SM_COPIED      ; Indicate copy success
             jsr Status          ; ,,
-            bit SWAP            ; If swap is selcted, copy the destination sysex
+            bit COMMODORE       ; If swap is selcted, copy the destination sysex
             bpl copy_r          ;   into the existing record
             ldy #$9e            ;   ,,
 -loop:      lda TEMPBUFF,y      ;   ,,
@@ -924,8 +998,6 @@ Sequencer:  ldx SEQ_LAST        ; Turn off last note whenever a transport
             ldy #0              ;   control is activated
             jsr NOTEOFF         ;   ,,
             lda MIDI_CH         ; Set MIDI channel
-            sec                 ; ,,
-            sbc #1              ; ,,
             jsr SETCH           ; ,,
             lda SEQ_XPORT       ; Is transport currently on?
             beq start           ;   If not, start the sequencer
@@ -1006,13 +1078,13 @@ GoSave:     lda SHIFT           ; Check for Commodore key
             cmp #2              ; ,,
             bne save_all        ; ,,
             sec                 ; If held, enable one voice save
-            ror SVOICE          ; ,,
+            ror COMMODORE       ; ,,
 save_all:   jsr CLALL
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            bit SVOICE          ; If this is a single-voice save,
+            bit COMMODORE       ; If this is a single-voice save,
             bpl prompt          ;   show the voice number in the prompt
             ldy CURLIB_IX       ;   ,,
             iny                 ;   ,, increment for 1-index
@@ -1042,7 +1114,7 @@ start_save: lda #0              ; Turn off KERNAL messages
             jsr CHKOUT          ; ,,
             ldx #SM_SAVING      ; Show "SAVING..."
             jsr Status          ; ,,
-            bit SVOICE          ; If this is a single-voice save, set the
+            bit COMMODORE       ; If this is a single-voice save, set the
             bpl save_lib        ;   disk library index to the current index
             ldy CURLIB_IX       ;   ,,
             .byte $3c           ; Skip word (SKW) 
@@ -1061,7 +1133,7 @@ save_lib:   ldy #0              ; Initialize disk save index
             beq snext_prg       ;   to next program
             iny                 ; Increment the byte counter and loop
             bne loop            ; ,,
-snext_prg:  bit SVOICE          ; If this is a single-voice save, 
+snext_prg:  bit COMMODORE       ; If this is a single-voice save, 
             bmi save_r          ;   close it out after the first sysex message
             ldy DISKLIB_IX      ; Increment the disk library index 
             iny                 ; ,,
@@ -1089,12 +1161,12 @@ GoLoad:     lda SHIFT           ; Check for Commodore key
             cmp #2              ; ,,
             bne load_all        ; ,,
             sec                 ; Enable merge if Commodore is pressed
-            ror MERGE           ; ,,
+            ror COMMODORE       ; ,,
 load_all:   jsr CLALL
             jsr Popup
             lda #<LoadLabel
             ldy #>LoadLabel
-            bit MERGE
+            bit COMMODORE
             bpl load_lab
             lda #<MergeLabel
             ldy #>MergeLabel
@@ -1122,7 +1194,7 @@ start_load: lda #0              ; Turn off KERNAL messages
 disk_err2:  bcs disk_error      ; ,,
             ldx #SM_LOADING
             jsr Status       
-            bit MERGE           ; If Merge, start loading from current index
+            bit COMMODORE       ; If Merge, start loading from current index
             bpl not_merge       ; ,,
             ldy CURLIB_IX       ; ,,
             .byte $3c           ; Skip word (SKW)
@@ -1383,10 +1455,8 @@ no_decinc:  clc
 
 ; Draw Edit Page
 ; at PAGE
-SwitchPage: lda #0              ; Clear merge, single voice and swap flags
-            sta MERGE           ; ,,
-            sta SVOICE          ; ,,
-            sta SWAP            ; ,,
+SwitchPage: lda #0              ; Clear commodore function flag
+            sta COMMODORE       ; ,,
             jsr ClrScr
             jsr ClrCursor
             ldx PAGE            ; Acquire current page index
@@ -1548,7 +1618,7 @@ WriteText:  sta PTRD
             jsr PETtoScr
             sta (FIELD),y
             iny
-            cpy #21             ; Max size, for the NAME field
+            cpy #20             ; Max size, for the NAME field
             bcc loop
 wr_r:       rts
             
@@ -1683,21 +1753,21 @@ PrgLoc:     jsr Validate        ; Set library pointer and validate
             sbc #5              ;   ,,
 usergr:     clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta TEMP_NAME          ;   Set it to first digit
+            sta TEMP_NAME       ;   Set it to first digit
             iny
             lda (PTR),y         ; Get bank/program number
             pha
             and #$07            ; Isolate the program number
             clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta TEMP_NAME+2        ;   Set it to third digit
+            sta TEMP_NAME+2     ;   Set it to third digit
             pla
             lsr                 ; Isolate the bank number
             lsr                 ;   ,,
             lsr                 ;   ,,
             clc                 ;   Add #$31 to make it a screen code numeral
             adc #$31            ;   ,,
-            sta TEMP_NAME+1        ;   Set it to second digit
+            sta TEMP_NAME+1     ;   Set it to second digit
             rts
 unset:      lda #"-"
             sta TEMP_NAME
@@ -2174,10 +2244,7 @@ NRPNpost:   lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
             cpx #$90            ; If this is one of the settings
             bcs post_r          ;   parameters for Ed, do not send to P5
             stx IX              ; Temporarily store the NRPN number in IX
-            ldy MIDI_CH         ; Get MIDI channel
-            dey                 ; ,, zero-index it
-            tya                 ; ,,
-            and #$0f            ; Low nybble is MIDI channel
+            lda MIDI_CH         ; Get MIDI channel
             ora #%10110000      ; Control Change
             jsr MIDIOUT         ; ,,
             lda #%01100011      ; NRPN parameter number MSB CC
@@ -2282,6 +2349,9 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             bcc irq_r           ; ,,
             cmp #ST_NOTEON      ; And is it a note on message?
             bne irq_r           ; ,,
+            jsr GETCH           ; Is this note on message on the specified
+            cmp MIDI_CH         ;  MIDI channel?
+            bne irq_r           ;  ,,
             tya                 ; If so, move Velocity to A
             ldy SEQ_REC_IX      ;   Get index to the current record step
             sta VELOCITY,y      ;   and store velocity
@@ -2320,21 +2390,22 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             jsr CHKMIDI         ; Is this a MIDI-based interrupt?
             bne midi            ;   If so, handle MIDI input
             bit $9111           ; Read VIA to clear interrupt
-            lda SHIFT
-            cmp #3
-            bne ignore
-            pla 
-            pla 
-            pla 
-            pla
-            pla
-            jmp Reset
+            lda SHIFT           ; Check for both Commodore and SHIFT.
+            cmp #3              ; ,,
+            bne ignore          ; ., otherwise, RFI
+            pla                 ; Remove X, Y, A, status flag, and return
+            pla                 ;   address because RTI isn't being done.
+            pla                 ;   ,,
+            pla                 ;   ,,
+            pla                 ;   ,,
+            pla                 ;   ,,
+            jmp Reset           ; Reset application
 ignore:     jmp RFI             ; Back to normal NMI, after register saves
 midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
-            jmp NMIR            ; Defined in p5ed-dev.asm and p5ed-cart.asm
+            jmp RFI             ; ,,
 sysexwait:  lda #$5a            ; Show MIDI indicator in upper left
             sta SCREEN          ; ,,
             jsr MIDIIN          ; MIDI byte is in A
@@ -2435,7 +2506,7 @@ f_0:        lda #<Rev1
             jmp WriteText
 
 ; Draw Name Field           
-Name:       ldy #21
+Name:       ldy #20
             lda #" "
 -loop:      sta SCREEN+22,y
             dey 
@@ -2474,6 +2545,11 @@ r_0:        lda #<LO
             ldy #>LO
             jmp WriteText 
             
+; Draw 1-Indexed Numeric Field
+Num1Ind:    clc 
+            adc #1
+            ; Fall through to Num
+
 ; Draw Numeric Field       
 Num:        tay 
             jsr TwoDigNum
@@ -2705,12 +2781,13 @@ Success:    .asc "   SUCCESS",0
 Undone:     .asc "   UNDO 00",0
 Erased:     .asc "    ERASED",0
 Swapped:    .asc "   SWAPPED",0
+NoGroup:    .asc "  NO GROUP",0
 StatusL:    .byte <Failed,<Received,<Sent,<NotEmpty,<Welcome,<Generated
             .byte <ClrStatus,<Copied,<Saving,<Loading,<Success,<Undone,<Erased,
-            .byte <Swapped
+            .byte <Swapped,<NoGroup
 StatusH:    .byte >Failed,>Received,>Sent,>NotEmpty,>Welcome,>Generated
             .byte >ClrStatus,>Copied,>Saving,>Loading,>Success,>Undone,>Erased,
-            .byte >Swapped
+            .byte >Swapped,>NoGroup
 
 ; MIDI Messages and Headers
 EditBuffer: .byte $f0, $01, $32, $03, $ff
@@ -2753,17 +2830,17 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
 ; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
-; 17=Tempo, 18=Q Comp
+; 17=Tempo, 18=Q Comp, 19=MIDI Channel
 TSubL:      .byte <ValBar-1,<PrgLine-1,<Switch-1,<Track-1
             .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
-            .byte <Num-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
+            .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
             .byte <QComp-1
 TSubH:      .byte >ValBar-1,>PrgLine-1,>Switch-1,>Track-1
             .byte >Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1,>Freq-1
-            .byte >Num-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
+            .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
             .byte >QComp-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0 , 1, 8, 1,0, 0,0,16,0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,96,16,11,64,0,10,0,80,112
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0 , 0, 8, 1,0, 0,0,16,0
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,96,15,11,64,0,10,0,80,112
 
 ; Enum field values
 NoTrack:    .asc "NONE",0
@@ -2842,8 +2919,8 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_SWITCH,F_SWITCH
             
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
-            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_VALUE
-            .byte F_SWITCH,F_SWITCH,F_VALUE,F_SWITCH
+            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_SWITCH,F_VALUE
+            .byte F_SWITCH,F_SWITCH,F_VALUE
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
@@ -2859,7 +2936,7 @@ TEMPO_FLD:  .byte F_TEMPO,F_64,F_64,F_MUTATIONS
 FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
-            .byte 52,87,53,54,13,37,86,41,42,97,38,39,98,51
+            .byte 52,87,53,54,13,37,86,51,41,42,97,38,39,98
             ; These are not really NRPN numbers, but use the CURVCE storage
             ; for menu settings
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Library View
@@ -2933,13 +3010,18 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"GLIDE RATE",CR
             .asc RT,"VINTAGE",CR
             .asc RT,"WHEEL RANGE",CR
+            .asc RT,"RELEASE/HOLD",CR
             .asc RT,"VEL  >FILTER",CR
             .asc RT,TL,TL,TL,"  >AMP",CR
             .asc RT,"     AMT",CR
             .asc RT,"AFT  >FILTER",CR
             .asc RT,TL,TL,TL,"  >LFO",CR
             .asc RT,"     AMT",CR
-            .asc RT,"RELEASE/HOLD"
+            .asc RT,"P10  MODE",CR
+            .asc RT,TL,TL,TL,"  LAYER B",CR
+            .asc RT,"     LEVEL A",CR
+            .asc RT,"     LEVEL B",CR
+            .asc RT,"     SPLIT"
             .asc 00 
             
 Setup:      .asc 30,CR,"   ED FOR PROPHET 5",CR
@@ -2967,7 +3049,7 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
             .asc 5," -  + ",30," SELECT VOICE",CR
             .asc 5," CLR  ",30," ERASE VOICE",CR
-            .asc 5," P    ",30," SET PROG #",CR
+            .asc 5," P    ",30," PRG# ",5,RVON,"C=",RVOF,"P",30," GRP#",CR
             .asc 5," C    ",30," COPY ",5,RVON,"C=",RVOF,"C",30," SWAP",CR
             .asc 5," V    ",30," SEND VOICE(S)",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
@@ -3005,7 +3087,10 @@ Window:     .asc 5 ; White
             .asc 30,00
 
 ; Popup Window Dialogs            
-PrgLabel:   .asc 5,"PROGRAM #",30,0
+PrgLabel:   .asc 5,"CHANGE",CR
+            .asc RT,RT,RT,RT,RT,"PROGRAM # TO",30,0
+GrpLabel:   .asc 5,"CHANGE",CR
+            .asc RT,RT,RT,RT,RT,"GROUP #",RT," TO",30,0
 ReqLabel:   .asc 5,"REQUEST #",30,0
 SaveLabel:  .asc 5,"SAVE",30,0
 LoadLabel:  .asc 5,"LOAD",30,0
