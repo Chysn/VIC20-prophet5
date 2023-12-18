@@ -4,9 +4,5 @@
 xa -l toc -o ./vic/p5ed.bin ./src/p5ed.asm
 printf "\x00\xa0" | cat - ./vic/p5ed.bin > ./vic/p5ed
 cp ./vic/p5ed ~/personal/vic/p5ed
-
-# Build production version for installation to cartridge
-#xa -l toc-cart -o ./vic/p5ed-cart.bin ./src/p5ed-cart.asm
-#printf "\x00\xa0" | cat - ./vic/p5ed-cart.bin > ./vic/p5ed-cart
-#cat ./vic/p5ed-cart.bin ./src/padding.bin | head -c 8192 > ./vic/p5ed.eep
+cat ./vic/p5ed.bin ./src/padding.bin | head -c 8192 > ./vic/p5ed.eep
 

@@ -1,6 +1,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
-;                               Ed for Prophet 5
+;                               Ed for Prophet-5
 ;                            (c)2023, Jason Justian
 ;                  
 ; Assembled with XA
@@ -3024,7 +3024,7 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"     SPLIT"
             .asc 00 
             
-Setup:      .asc 30,CR,"   ED FOR PROPHET 5",CR
+Setup:      .asc 30,CR,"   ED FOR PROPHET-5",CR
             .asc "   ",TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,CR
             .asc "  2023 JASON JUSTIAN",CR,CR
             .asc "SETTINGS",CR
