@@ -2368,7 +2368,8 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             cmp MIDI_CH         ;  MIDI channel?
             bne irq_r           ;  ,,
             lda SEQ_REC_IX      ; Is there any space left in the sequencer?
-            bcs irq_r           ; ,,
+            cmp #SEQS           ; ,,
+            beq irq_r           ; ,,
             tya                 ; If so, move Velocity to A
             ldy SEQ_REC_IX      ;   Get index to the current record step
             sta VELOCITY,y      ;   and store velocity
