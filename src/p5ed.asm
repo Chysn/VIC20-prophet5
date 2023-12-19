@@ -2367,9 +2367,9 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             jsr GETCH           ; Is this note on message on the specified
             cmp MIDI_CH         ;  MIDI channel?
             bne irq_r           ;  ,,
-            lda SEQ_REC_IX      ; Is there any space left in the sequencer?
-            cmp #SEQS           ; ,,
-            beq irq_r           ; ,,
+            ;lda SEQ_REC_IX      ; Is there any space left in the sequencer?
+            ;cmp #SEQS           ; ,,
+            ;beq irq_r           ; ,,
             tya                 ; If so, move Velocity to A
             ldy SEQ_REC_IX      ;   Get index to the current record step
             sta VELOCITY,y      ;   and store velocity
@@ -2378,7 +2378,7 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             jsr ShowStep        ; Show step number and note name
             iny                 ; Increment the record index
             sty SEQ_REC_IX      ; ,,
-            jmp irq_r
+            jmp IRQ
 playback:   dec SEQ_COUNT       ; If play is enabled, do the countdown
             beq adv             ; Advance sequencer if count is 0
             lda SEQ_COUNT       ; Before count finishes, 
