@@ -300,7 +300,6 @@ lib_ok:     dec IX
             sta CURLIB_IX       ;   * Current library entry index
             sta SEQ_XPORT       ;   * Sequencer transport
             sta SEQ_PLAY_IX     ;   * Sequencer play index
-            sta SEQ_REC_IX      ;   * Sequencer record index
             sta MUTATE          ;   * Generator mutation enable
             sta MIDI_CH         ;   * MIDI Channel
             lda #1              ;
@@ -314,8 +313,17 @@ lib_ok:     dec IX
             sta SEQ_STEPS       ;     ,,
             lda #30             ;   * Sequencer tempo to 120 BPM
             sta SEQ_TEMPO       ;     ,,
-            jsr ClearSeq        ; Clear the sequence and velocity data
             jsr ResetField      ; Reset page-specific field selections
+            
+            ; Initialize the sequencer
+            ldy #8
+            sty SEQ_REC_IX      ; Set recorded step index
+-loop:      lda DefSeq-1,y      ; Copy default sequence
+            sta SEQUENCE,y      ;   to active sequence
+            lda #100            ;   ,,
+            sta VELOCITY,y      ;   ,,
+            dey 
+            bpl loop
             
             ; Initialize user interface
             ldy CURLIB_IX       ; Select first library entry
@@ -699,7 +707,7 @@ no_mutate:  jsr SetCurPtr       ; Pack program into library
 gen_r:      jmp MainLoop
              
 ; Set Program Number
-; for current program buffer                    
+; for current voice                   
 SetPrg:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
             lda PTR             ; Unpack buffer prior to program # change
@@ -725,8 +733,14 @@ set_prg:    jsr Popup
             .byte $3c           ; Skip word (SKW)
 is_unset:   ldy #0              ; Cursor position in edit field        
             jsr SetPrgNum       ; Get program number from user
-            bcs setp_r          ; Return if cancel or error
-            ldy #4              ; Get the user input from PTRD and update the
+            bcc do_set          ;   If ok, do the set
+            lda IX              ;   If not okay, but zero, try again
+            bne is_unset        ;   ,,
+            lda #$80            ; Mark the program as unset if the input was
+            sta PTRD            ;   totally empty
+            lda #$00            ;   ,,
+            sta PTRD+1          ;   ,,
+do_set:     ldy #4              ; Get the user input from PTRD and update the
             lda PTRD            ;   actual sysex in the library with the
             sta (PTR),y         ;   new program number
             iny                 ;   ,,
@@ -1410,7 +1424,9 @@ pbacksp:    ldy IX
             sta TEMPNAME,y
             dec IX
             jmp ppos_cur
-pdone:      ldy IX              ; If edit isn't complete, then do nothing
+pdone:      sec                 ; Set carry (error) as default
+            ldy IX              ; If edit isn't complete, then do nothing
+            beq setprg_r        ; ,, unless it's totally empty
             cpy #3              ; ,,
             bne pgetkey         ; ,,
             lda TEMPNAME           ; Get the input numeral
@@ -1486,27 +1502,16 @@ pf_prg:     ldy CURLIB_IX       ; Get current library entry
             sta STATUSDISP-21   ;   ,,
             ldx PAGE
             cpx #7              ; If Help page, do not populate any fields
-            bne params          ; ,,
-            rts                 ; ,,
-params:     ldy TopParamIX,x
+            beq ShowPrgNum      ; ,, and do not draw a cursor
+            ldy TopParamIX,x
 -loop:      lda FPage,y         ; Get the page number of the field
             cmp PAGE            ; Is the next field on the current page? 
-            bne ShowPrgNum      ; If not, then fields are done
+            bne DrawCursor      ; If not, then fields are done
             sty DRAW_IX         ; Drawn field index
             jsr DrawField       ; Draw the field
             ldy DRAW_IX         ; Bring back Y as iterator
             iny                 ; Increment the field number
             bpl loop            ; Move to the next field
-            ; Fall through to ShowPrgNum
-            
-; Show Current Program Number
-ShowPrgNum: ldy CURLIB_IX       ; Get current program number
-            jsr PrgLoc          ; ,,
-            ldy #2              ; Show program number or unset (---)
--loop:      lda TEMPNAME,y      ; ,,
-            sta STATUSDISP+2,y  ; ,,
-            dey                 ; ,,
-            bpl loop            ; ,,
             ; Fall through to DrawCursor
 
 ; Draw Cursor
@@ -1522,12 +1527,22 @@ DrawCursor: ldy FIELD_IX
             sta (FIELD,x)       ;   ,,
 dc_col:     lda FType,y         ; Color the field the selected color only
             cmp #F_SWITCH       ;   if it's a switch
-            bne dc_r            ;   ,,
+            bne ShowPrgNum      ;   ,,
             jsr FieldColor      ;   ,,
             lda #SELCOL         ;   ,,
             ldx #0              ;   ,,
             sta (FIELD,x)       ;   ,,
-dc_r:       rts
+            ; Fall through to ShowPrgNum
+
+; Show Current Program Number
+ShowPrgNum: ldy CURLIB_IX       ; Get current program number
+            jsr PrgLoc          ; ,,
+            ldy #2              ; Show program number or unset (---)
+-loop:      lda TEMPNAME,y      ; ,,
+            sta STATUSDISP+2,y  ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
+            rts
           
 ; Clear Previous Cursor 
 ; Alias as the Blank field type
@@ -1563,8 +1578,7 @@ nrpn_found: lda PAGE
             
 ; Draw Field
 ; at index Y
-DrawField:  sty DRAW_IX         ; Pass draw index to field via DRAW_IX
-            jsr FieldLoc        ; Set the field's physical screen location
+DrawField:  jsr FieldLoc        ; Set the field's physical screen location
             lda FType,y         ; Get the field's type index
             tax                 ;   in X
             lda TSubH,x         ; Get the field's draw address-1 and put it
@@ -2302,20 +2316,11 @@ pl:         stx SEQ_PLAY_IX     ; Store incremented (or reset) index
             lda SEQUENCE,x      ; Get the sequence note number
             sta SEQ_LAST        ; Store note for next note off
             tax                 ; ,,
-rest:       jsr NOTEON          ; Send Note On command
-            lda SEQ_TEMPO       ; Reset tempo countdown
+            jsr NOTEON          ; Send Note On command
+rest:       lda SEQ_TEMPO       ; Reset tempo countdown
             sta SEQ_COUNT       ; ,,
             lsr                 ; Set the time at which the note is
             sta HALF_TEMPO      ;   turned off
-            rts
-
-; Clear the sequence            
-ClearSeq:   ldy #SEQS-1         ; Fill 64 bytes
-            lda #0              ; With rests
--loop:      sta SEQUENCE,y      ; ,,
-            sta VELOCITY,y      ; ,,
-            dey                 ; ,,
-            bpl loop            ; ,,
             rts
 
 ; Stop the sequencer            
@@ -2822,6 +2827,10 @@ BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 ; Start entry for each library view page
 LibDiv:     .byte 0,16,32,48
 
+; Default Sequence
+; MIDI note number
+DefSeq:     .byte 60,67,72,67,70,64,68,67
+
 ; Mutable Parameters
 ; NRPN numbers
 Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
@@ -2861,17 +2870,20 @@ TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0 , 0, 8, 1,0, 0,0,16,0
 TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,96,15,11,64,0,10,0,80,112
 
 ; Enum field values
-NoTrack:    .asc "NONE",0
-HalfTrack:  .asc "HALF",0
-FullTrack:  .asc "FULL",0
-Rev1:       .asc "1/2",0
-Rev3:       .asc "3  ",0
-LO:         .asc "LO ",0
-LOR:        .asc "LOR",0
-LAS:        .asc "LAS",0
-LAR:        .asc "LAR",0
-HI:         .asc "HI ",0
-HIR:        .asc "HIR",0
+NoTrack:    .asc "NONE",0       ; Filter keyboard modes
+HalfTrack:  .asc "HALF",0       ; ,,
+FullTrack:  .asc "FULL",0       ; ,,
+Rev1:       .asc "1/2",0        ; Revision
+Rev3:       .asc "3  ",0        ; ,,
+LO:         .asc "LO ",0        ; Unison priority
+LOR:        .asc "LOR",0        ; ,,
+LAS:        .asc "LAS",0        ; ,,
+LAR:        .asc "LAR",0        ; ,,
+HI:         .asc "HI ",0        ; ,,
+HIR:        .asc "HIR",0        ; ,,
+NOR:        .asc "NOR",0        ; Prophet 10 bi-timbral modes
+STC:        .asc "STC",0        ; ,,
+SPL:        .asc "SPL",0        ; ,,
 
 ; Note Name Tables
 ; Flats are constructed of two screen code characters, Commodre-M and
@@ -3034,12 +3046,12 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"     AMT",CR
             .asc RT,"AFT  >FILTER",CR
             .asc RT,TL,TL,TL,"  >LFO",CR
-            .asc RT,"     AMT",CR
-            .asc RT,"P10  MODE",CR
-            .asc RT,TL,TL,TL,"  LAYER B",CR
-            .asc RT,"     LEVEL A",CR
-            .asc RT,"     LEVEL B",CR
-            .asc RT,"     SPLIT"
+            .asc RT,"     AMT"
+            ;.asc CR,RT,"P10  MODE",CR
+            ;.asc RT,TL,TL,TL,"  LAYER B",CR
+            ;.asc RT,"     LEVEL A",CR
+            ;.asc RT,"     LEVEL B",CR
+            ;.asc RT,"     SPLIT"
             .asc 00 
             
 Setup:      .asc 30,CR,"   ED FOR PROPHET-5",CR
