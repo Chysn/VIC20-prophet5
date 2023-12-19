@@ -2367,6 +2367,8 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             jsr GETCH           ; Is this note on message on the specified
             cmp MIDI_CH         ;  MIDI channel?
             bne irq_r           ;  ,,
+            lda SEQ_REC_IX      ; Is there any space left in the sequencer?
+            bcs irq_r           ; ,,
             tya                 ; If so, move Velocity to A
             ldy SEQ_REC_IX      ;   Get index to the current record step
             sta VELOCITY,y      ;   and store velocity
@@ -2375,11 +2377,7 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             jsr ShowStep        ; Show step number and note name
             iny                 ; Increment the record index
             sty SEQ_REC_IX      ; ,,
-            cpy #SEQS           ; Has it reached 64 notes (maximum)?
-            bcc irq_r           ; If not, just return
-            lda #0              ; Otherwise, reset the record index
-            sta SEQ_REC_IX      ; ,,
-            beq irq_r
+            jmp irq_r
 playback:   dec SEQ_COUNT       ; If play is enabled, do the countdown
             beq adv             ; Advance sequencer if count is 0
             lda SEQ_COUNT       ; Before count finishes, 
@@ -2416,14 +2414,13 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             pla                 ;   ,,
             jmp Reset           ; Reset application
 ignore:     jmp RFI             ; Back to normal NMI, after register saves
-midi:       ldy $9114           ; Flash MIDI indicator
-            sty COLOR           ; ,,
-            ldy SEQ_XPORT       ; If in note record mode, ignore sysex
+midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
+            sta COLOR
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             ldy TGTLIB_IX       ; Get target library index
