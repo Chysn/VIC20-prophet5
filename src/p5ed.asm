@@ -1661,7 +1661,7 @@ ClrScr:     ldx #230            ; Clear the entire screen, except for the
             sta SCREEN+22,x     ;   and the top row, used for the sequencer.
             sta SCREEN+231,x    ;   ,,
             lda #PARCOL         ;   ,, (for parameters)
-            sta COLOR+1,x         ;   ,,
+            sta COLOR,x         ;   ,,
             sta COLOR+231,x     ;   ,,
             dex                 ;   ,,
             cpx #$ff            ;   ,,
@@ -2416,13 +2416,13 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             pla                 ;   ,,
             jmp Reset           ; Reset application
 ignore:     jmp RFI             ; Back to normal NMI, after register saves
-midi:       inc COLOR           ; Flash MIDI indicator
-            ldy SEQ_XPORT       ; If in note record mode, ignore sysex
+midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
+            sta COLOR
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             ldy TGTLIB_IX       ; Get target library index
