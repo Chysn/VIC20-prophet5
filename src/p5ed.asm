@@ -1694,7 +1694,7 @@ nc_cl:      dey                 ; ,,
             sta COLOR+463       ; ,,
             lda #SEQCOL         ; Add sequence transport color
             sta COLOR+21        ; ,,
-            lda #" "            ; Disappear the MIDI indicator
+            lda #$2a            ; Show the MIDI indicator
             sta SCREEN          ; ,,
             jmp HOME
             
@@ -2421,12 +2421,14 @@ midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             bne sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
-sysexwait:  lda #$5a            ; Show MIDI indicator in upper left
-            sta SCREEN          ; ,,
-            jsr MIDIIN          ; MIDI byte is in A
-            tay                 ; Flash color for MIDI input
-            dey                 ; ,, Decrementing by 1 here so that MIDI note
-            sty COLOR           ; ,,   off of 0 doesn't erase the indicator
+sysexwait:  jsr MIDIIN          ; MIDI byte is in A
+            pha                 ; Flash the MIDI indicator
+            lsr                 ;   using the high nybble of the data
+            lsr                 ;   ,,
+            lsr                 ;   ,,
+            lsr                 ;   ,,
+            sta COLOR           ;   ,,
+            pla                 ;   ,, Return to original byte
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             ldy TGTLIB_IX       ; Get target library index
