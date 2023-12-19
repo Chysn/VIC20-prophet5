@@ -1672,7 +1672,6 @@ ClrScr:     ldx #230            ; Clear the entire screen, except for the
             sta PTRD+1          ; ,,
             ldy #22             ; ,,
             ldx #0              ; ,,
-            stx COLOR           ; ,, (turn off MIDI indicator)
 -loop:      lda #SELCOL         ; ,,
             sta (PTRD,x)        ; ,,
             lda PTRD            ; ,,
@@ -2423,7 +2422,13 @@ midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
-            inc COLOR           ; Flash MIDI indicator
+            pha 
+            lsr 
+            lsr
+            lsr
+            lsr
+            sta COLOR           ;   Flash the indicator
+            pla
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             ldy TGTLIB_IX       ; Get target library index
