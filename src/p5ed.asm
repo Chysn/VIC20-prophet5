@@ -2422,12 +2422,9 @@ midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
-            pha                 ; Flash the MIDI indicator
-            lsr                 ;   using the high nybble of the data
-            lsr                 ;   ,,
-            lsr                 ;   ,,
-            lsr                 ;   ,,
+            eor #$04
             sta COLOR           ;   ,,
+            eor #$04
             pla                 ;   ,, Return to original byte
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
