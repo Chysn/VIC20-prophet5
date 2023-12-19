@@ -2121,7 +2121,7 @@ PrgChgMsg:  lda PRGCH_TX        ; Is program change transmit on?
             ldy #4              ; ,,
             lda (PTR),y         ; ,,
             bmi pch_r           ; ,, If not, do nothing
-            php                 ; Save for bank select message
+            pha                 ; Save for bank select message
             ldx #$00            ; Send bank select message using group
             ldy #$00            ; ,,
             jsr CONTROLC        ; ,, Bank select MSB
