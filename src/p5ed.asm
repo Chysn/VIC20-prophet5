@@ -1028,7 +1028,11 @@ DelNote:    lda SEQ_XPORT       ; Is the sequencer in record status?
             bne del_r           ; If not, do nothing
             ldy SEQ_REC_IX      ; Is the record head at the beginning?
             beq del_r           ;   If so, do nothing
-            dey                 ; Decrement the note index
+            lda SHIFT           ; If Commodore key is held down, go back
+            cmp #2              ;   to the beginning
+            bne del_one         ;   ,,
+            ldy #1              ;   ,,
+del_one:    dey                 ; Decrement the note index
             sty SEQ_REC_IX      ; ,,
             ldy SEQ_REC_IX      ; Clear out the note
             lda #0              ; ,,
@@ -1666,11 +1670,11 @@ ClrScr:     ldx #230            ; Clear the entire screen, except for the
             dex                 ;   ,,
             cpx #$ff            ;   ,,
             bne loop            ;   ,,
-            lda #<COLOR         ; Set margin cursor to the select color
+            lda #<(COLOR+22)    ; Set margin cursor to the select color
             sta PTRD            ; ,,
-            lda #>COLOR         ; ,,
+            lda #>(COLOR+22)    ; ,,
             sta PTRD+1          ; ,,
-            ldy #22             ; ,,
+            ldy #21             ; ,,
             ldx #0              ; ,,
 -loop:      lda #SELCOL         ; ,,
             sta (PTRD,x)        ; ,,
@@ -1694,17 +1698,17 @@ nc_cl:      dey                 ; ,,
             sta COLOR+463       ; ,,
             lda #SEQCOL         ; Add sequence transport color
             sta COLOR+21        ; ,,
-            lda #$2a            ; Show the MIDI indicator
-            sta SCREEN          ; ,,
+            lda #$2a            ; Show the MIDI indicator in lower right
+            sta SCREEN+505      ; ,,
             jmp HOME
             
 ; Display Status Message
 ; in X            
 Status:     txa 
             pha
-            lda #<(STATUSDISP+12)
+            lda #<(STATUSDISP+11)
             sta FIELD
-            lda #>(STATUSDISP+12)
+            lda #>(STATUSDISP+11)
             sta FIELD+1
             lda StatusH,x
             tay 
@@ -2287,8 +2291,10 @@ post_r:     rts
 PlayNote:   ldx SEQ_PLAY_IX     ; Is this the last sequencer step?
             inx                 ; ,,
             cpx SEQ_STEPS       ; ,,
-            bcc pl              ; If not, play the next step
-            ldx #0              ; Otherwise reset the sequencer
+            bcs reset_seq       ; If so, reset sequencer
+            cpx SEQ_REC_IX      ; Is this the last recorded step?
+            bcc pl              ; ,, If not, play
+reset_seq:  ldx #0              ; Otherwise reset the sequencer
 pl:         stx SEQ_PLAY_IX     ; Store incremented (or reset) index
             lda VELOCITY,x      ; Get the velocity
             beq rest            ; Rest if zero velocity
@@ -2421,8 +2427,10 @@ midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
-            sta COLOR
-            cmp #ST_SYSEX       ; If sysex, 
+            cmp #0              ; Flash indicator if non-zero byte
+            beq skip_ind        ; ,,
+            sta COLOR+505       ; ,,
+skip_ind:   cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             ldy TGTLIB_IX       ; Get target library index
             ldx #1              ;   set sysex listen flag
@@ -2780,7 +2788,7 @@ q_disp:     ora #$30            ; Convert to screen code and write to the field
 Failed:     .asc "    FAILED",0
 Received:   .asc "  RECEIVED",0
 Sent:       .asc "   SENT OK",0
-NotEmpty:   .asc " NOT UNSET",0
+NotEmpty:   .asc "PROG # SET",0
 Welcome:    .asc "H FOR HELP",0
 Generated:  .asc " GENERATED",0
 ClrStatus:  .asc "          ",0
