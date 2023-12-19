@@ -2117,17 +2117,12 @@ lib_good:   ldy #UNDOS          ; When a new program is selected, clear
 ; Send Program Change
 ; Including bank select, for the current voice pointer, if it's a program
 PrgChgMsg:  lda PRGCH_TX        ; Is program change transmit on?
-            bne pch_r           ; ,, If not, do nothing
-            ldy #4              ; ,,
+            beq pch_r           ; ,, If not, do nothing
+            ldy #4              ; Is this a program?
             lda (PTR),y         ; ,,
-            php                 ; Save for bank select message
             bmi pch_r           ; ,, If not, do nothing
+            tay                 ; Move bank to Y for select
             ldx #$00            ; Send bank select message using group
-            ldy #$00            ; ,,
-            jsr CONTROLC        ; ,,
-            ldx #$00            ; ,,
-            plp                 ; ,,
-            tay                 ; ,,
             jsr CONTROLC        ; ,,
             ldy #5              ; Send program change message using
             lda (PTR),y         ;   bank and program numbers
