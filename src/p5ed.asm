@@ -2416,13 +2416,14 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             pla                 ;   ,,
             jmp Reset           ; Reset application
 ignore:     jmp RFI             ; Back to normal NMI, after register saves
-midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
+midi:       ldy $9114           ; Flash MIDI indicator
+            sty COLOR           ; ,,
+            ldy SEQ_XPORT       ; If in note record mode, ignore sysex
             cpy #$01            ; ,,
             bne sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
-            sta COLOR
             cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
             ldy TGTLIB_IX       ; Get target library index
