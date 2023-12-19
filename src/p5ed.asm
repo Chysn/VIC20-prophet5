@@ -74,14 +74,15 @@ ANYWHERE    = $43               ; Temporary iterator (jiffy click not used)
 
 ; Application settings
 MIDI_CH     = CURVCE+$a0        ; MIDI channel
-NRPN_TX     = CURVCE+$a1        ; NRPN Transmit toggle
-DEVICE_NUM  = CURVCE+$a2        ; Storage Device number
-SEQ_STEPS   = CURVCE+$a3        ; Sequencer Steps
-SEQ_TEMPO   = CURVCE+$a4        ; Sequencer Tempo
-SEED1_PRG   = CURVCE+$a5        ; Generator Seed 1
-SEED2_PRG   = CURVCE+$a6        ; Generator Seed 2
-MUTATE      = CURVCE+$a7        ; Mutate flag
-SEQ_REC_IX  = CURVCE+$a8        ; Sequence record index
+NRPN_TX     = CURVCE+$a1        ; NRPN transmit toggle
+PRGCH_TX    = CURVCE+$a2        ; Program change transmit toggle
+DEVICE_NUM  = CURVCE+$a3        ; Storage Device number
+SEQ_STEPS   = CURVCE+$a4        ; Sequencer Steps
+SEQ_TEMPO   = CURVCE+$a5        ; Sequencer Tempo
+SEED1_PRG   = CURVCE+$a6        ; Generator Seed 1
+SEED2_PRG   = CURVCE+$a7        ; Generator Seed 2
+MUTATE      = CURVCE+$a8        ; Mutate flag
+SEQ_REC_IX  = CURVCE+$a9        ; Sequence record index
 
 ; Application Data Storage
 UNDO_NRPN   = $02a2             ; NRPN for undo level (32 levels)
@@ -304,6 +305,7 @@ lib_ok:     dec IX
             sta MIDI_CH         ;   * MIDI Channel
             lda #1              ;
             sta SEED1_PRG       ;   * Generator seed 1
+            sta PRGCH_TX        ;   * Program change
             lda #8              ;   * Device Number
             sta DEVICE_NUM      ;     ,,
             lda #2              ;   * Generator seed 2
@@ -2109,7 +2111,28 @@ lib_good:   ldy #UNDOS          ; When a new program is selected, clear
             sta LAST_NRPN       ; ,,
             lda PTR             ; Unpack the library into the edit
             ldy PTR+1           ;   buffer
-            jmp UnpBuff         ;   ,,
+            jsr UnpBuff         ;   ,,
+            ; Fall through to PrgChgMsg
+            
+; Send Program Change
+; Including bank select, for the current voice pointer, if it's a program
+PrgChgMsg:  lda PRGCH_TX        ; Is program change transmit on?
+            bne pch_r           ; ,, If not, do nothing
+            ldy #4              ; ,,
+            lda (PTR),y         ; ,,
+            php                 ; Save for bank select message
+            bmi pch_r           ; ,, If not, do nothing
+            ldx #$00            ; Send bank select message using group
+            ldy #$00            ; ,,
+            jsr CONTROLC        ; ,,
+            ldx #$00            ; ,,
+            plp                 ; ,,
+            tay                 ; ,,
+            jsr CONTROLC        ; ,,
+            ldy #5              ; Send program change message using
+            lda (PTR),y         ;   bank and program numbers
+            tax                 ;   ,,
+pch_r:      jmp PROGRAMC        ;   ,,
             
 ; Set Library Pointer
 ; to entry index in Y
@@ -2326,7 +2349,7 @@ only_step:  iny                 ; Increment step number by 1 for 1-indexed
             sta SCREEN+16       ; ,, 
             dey                 ; Decrement to put Y back where it was
 shstep_r:   rts 
-                           
+                                       
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERRUPT HANDLERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2372,7 +2395,7 @@ adv:        lda SCREEN+21       ; Flash annunciator at tempo
 irq_r:      jmp IRQ             ; Scan keyboard and RTI
 
 
-; NMI watches for incoming system exclusive data
+; NMI watches for incoming MIDI data and the reset key combo
 NMISR:      pha                 ; NMI does not automatically save registers like
             txa                 ;   IRQ does, so that needs to be done
             pha                 ;   ,,
@@ -2381,8 +2404,8 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             jsr CHKMIDI         ; Is this a MIDI-based interrupt?
             bne midi            ;   If so, handle MIDI input
             bit $9111           ; Read VIA to clear interrupt
-            lda SHIFT           ; Check for both Commodore and SHIFT.
-            cmp #3              ; ,,
+            lda SHIFT           ; Check for both Commodore and Control.
+            cmp #6              ; ,,
             bne ignore          ; ., otherwise, RFI
             pla                 ; Remove X, Y, A, status flag, and return
             pla                 ;   address because RTI isn't being done.
@@ -2872,7 +2895,7 @@ FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
             .byte 5
-            .byte 6,6,6,6,6,6,6,6
+            .byte 6,6,6,6,6,6,6,6,6
             .byte 7
 LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
@@ -2883,7 +2906,7 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 0,1,2,3,6,7,8,9,10,11,12,13,14
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
-            .byte 5,6,7,10,11,14,15,16
+            .byte 5,6,7,8,11,12,15,16,17
             .byte 0
 
 ; Field column
@@ -2893,7 +2916,7 @@ FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 1
-            .byte 14,14,14,14,14,14,14,14
+            .byte 14,14,14,14,14,14,14,14,14
             .byte 1
 
 ; Field type
@@ -2918,7 +2941,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             
             .byte F_HEX
 
-            .byte F_MIDICH,F_SWITCH,F_DEVICE,F_64
+            .byte F_MIDICH,F_SWITCH,F_SWITCH,F_DEVICE,F_64
 TEMPO_FLD:  .byte F_TEMPO,F_64,F_64,F_MUTATIONS
             
             .byte F_NONE
@@ -2933,7 +2956,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Library View
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; ,,
             .byte $ff
-            .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7
+            .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7,$a8
             .byte $ff
 
 ; Edit Page Fields
@@ -3020,7 +3043,8 @@ Setup:      .asc 30,CR,"   ED FOR PROPHET-5",CR
             .asc "  2023 JASON JUSTIAN",CR,CR
             .asc "SETTINGS",CR
             .asc RT,"MIDI CHANNEL",CR
-            .asc RT,"NRPN SEND",CR
+            .asc RT,"SEND NRPN",CR
+            .asc RT,"PROG CHANGE",CR
             .asc RT,"DISK DEVICE #",CR
             .asc CR,"SEQUENCER",CR
             .asc RT,"STEPS",CR
