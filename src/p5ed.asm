@@ -2118,17 +2118,23 @@ lib_good:   ldy #UNDOS          ; When a new program is selected, clear
 ; Including bank select, for the current voice pointer, if it's a program
 PrgChgMsg:  lda PRGCH_TX        ; Is program change transmit on?
             beq pch_r           ; ,, If not, do nothing
-            ldy #4              ; Is this a program?
+            ldy #4              ; ,,
             lda (PTR),y         ; ,,
             bmi pch_r           ; ,, If not, do nothing
-            tay                 ; Move bank to Y for select
+            php                 ; Save for bank select message
             ldx #$00            ; Send bank select message using group
-            jsr CONTROLC        ; ,,
+            ldy #$00            ; ,,
+            jsr CONTROLC        ; ,, Bank select MSB
+            ldx #$20            ; ,,
+            pla                 ; ,,
+            tay                 ; ,,
+            jsr CONTROLC        ; ,, Bank select LSB
             ldy #5              ; Send program change message using
             lda (PTR),y         ;   bank and program numbers
             tax                 ;   ,,
-pch_r:      jmp PROGRAMC        ;   ,,
-            
+            jsr PROGRAMC        ;   ,,
+pch_r:      rts
+
 ; Set Library Pointer
 ; to entry index in Y
 SetCurPtr:  ldy CURLIB_IX       ; For this endpoint, use the current index
