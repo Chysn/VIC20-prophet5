@@ -734,8 +734,8 @@ set_prg:    jsr Popup
 is_unset:   ldy #0              ; Cursor position in edit field        
             jsr SetPrgNum       ; Get program number from user
             bcc do_set          ;   If ok, do the set
-            lda IX              ;   If not okay, but zero, try again
-            bne is_unset        ;   ,,
+            lda IX              ;   If at beginning, mark as unset
+            bne setp_r          ;   If canceled, return
             lda #$80            ; Mark the program as unset if the input was
             sta PTRD            ;   totally empty
             lda #$00            ;   ,,
@@ -1009,14 +1009,8 @@ Sequencer:  ldx SEQ_LAST        ; Turn off last note whenever a transport
             lda MIDI_CH         ; Set MIDI channel
             jsr SETCH           ; ,,
             lda SEQ_XPORT       ; Is transport currently on?
-            beq start           ;   If not, start the sequencer
-            lda #0              ; Stop the sequencer
-            sta SEQ_XPORT       ; ,,
-            lda #" "            ; Clear the note number display
-            sta SCREEN+15       ; ,,
-            sta SCREEN+16       ; ,,
-            sta SCREEN+18       ; ,, And the note name display
-            sta SCREEN+19       ; ,,            
+            beq start           ; ,,  If not, start the sequencer
+            jsr StopSeq         ; ,,  If so, stop the sequencer
             jmp annunciate      ; ,,
 start:      lda SHIFT           ; Is Commodore key held down?
             and #$02            ; ,,
@@ -1234,8 +1228,8 @@ eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual
             bne next_rec        ;   ,, If not, use the same DISKLIB_IX again
             ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
             jsr TwoDigNum       ;   in the status area.
-            stx STATUSDISP+20   ;   ,,
-            sta STATUSDISP+21   ;   ,,
+            stx STATUSDISP+19   ;   ,,
+            sta STATUSDISP+20   ;   ,,
             lda DISKLIB_IX      ; Show progress bar
             asl                 ; ,, Multiple progress by 2
             jsr ProgPopup       ; ,,
@@ -2308,6 +2302,13 @@ StopSeq:    ldx SEQ_LAST        ; Turn off previous note
             sta SEQ_XPORT       ; ,,
             lda #" "            ; Turn off sequence annunciator
             sta SCREEN+21       ; ,, 
+            lda #0              ; Stop the sequencer
+            sta SEQ_XPORT       ; ,,
+            lda #" "            ; Clear the note number display
+            sta SCREEN+15       ; ,,
+            sta SCREEN+16       ; ,,
+            sta SCREEN+18       ; ,, And the note name display
+            sta SCREEN+19       ; ,,                        
             rts
 
 ; Play Next Note
