@@ -318,7 +318,7 @@ lib_ok:     dec IX
             ; Initialize the sequencer
             ldy #8
             sty SEQ_REC_IX      ; Set recorded step index
--loop:      lda DefSeq-1,y      ; Copy default sequence
+-loop:      lda DefSeq,y        ; Copy default sequence
             sta SEQUENCE,y      ;   to active sequence
             lda #100            ;   ,,
             sta VELOCITY,y      ;   ,,
@@ -1012,25 +1012,24 @@ Sequencer:  ldx SEQ_LAST        ; Turn off last note whenever a transport
             beq start           ;   If not, start the sequencer
             lda #0              ; Stop the sequencer
             sta SEQ_XPORT       ; ,,
-            jmp cl_notedis      ; Clear note display and annunciator
+            lda #" "            ; Clear the note number display
+            sta SCREEN+15       ; ,,
+            sta SCREEN+16       ; ,,
+            sta SCREEN+18       ; ,, And the note name display
+            sta SCREEN+19       ; ,,            
+            jmp annunciate      ; ,,
 start:      lda SHIFT           ; Is Commodore key held down?
             and #$02            ; ,,
             beq startplay       ; If not, start the playback
             lda #$01            ; Turn on the record transport bit
             sta SEQ_XPORT       ; ,,
             ldy SEQ_REC_IX      ; Show step number and name
-            jsr ShowStep        ; ,,
+            jsr ShowStep        ; Show the step
             jmp annunciate      ; ,,
 startplay:  lda #$02            ; Turn on the record playback bit
             sta SEQ_XPORT       ; ,,
-            ldx #$ff            ; Reset the play index
             stx SEQ_PLAY_IX     ; ,,
-            jsr PlayNote        ; Play the first note
-cl_notedis: lda #" "            ; Clear the note number display
-            sta SCREEN+15       ; ,,
-            sta SCREEN+16       ; ,,
-            sta SCREEN+18       ; ,, And the note name display
-            sta SCREEN+19       ; ,,            
+            jsr ResetSeq        ; Play the first note
 annunciate: ldx SEQ_XPORT       ; Get the sequencer transport graphic
             lda XportAnn,x      ;   from the annunicator table and
             sta SCREEN+21       ;   put it in the top right corner.
@@ -2300,15 +2299,26 @@ NRPNpost:   lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
             jsr MIDIOUT         ; ,,
 post_r:     rts
 
+; Stop the sequencer            
+; For disk operations
+StopSeq:    ldx SEQ_LAST        ; Turn off previous note
+            ldy #0              ;   ,,
+            jsr NOTEOFF         ;   ,,
+            lda #0              ; Turn off sequencer
+            sta SEQ_XPORT       ; ,,
+            lda #" "            ; Turn off sequence annunciator
+            sta SCREEN+21       ; ,, 
+            rts
+
 ; Play Next Note
 ; and set the countdown timer for the IRQ
 PlayNote:   ldx SEQ_PLAY_IX     ; Is this the last sequencer step?
             inx                 ; ,,
             cpx SEQ_STEPS       ; ,,
-            bcs reset_seq       ; If so, reset sequencer
+            bcs ResetSeq        ; If so, reset sequencer
             cpx SEQ_REC_IX      ; Is this the last recorded step?
             bcc pl              ; ,, If not, play
-reset_seq:  ldx #0              ; Otherwise reset the sequencer
+ResetSeq:   ldx #0              ; Otherwise reset the sequencer
 pl:         stx SEQ_PLAY_IX     ; Store incremented (or reset) index
             lda VELOCITY,x      ; Get the velocity
             beq rest            ; Rest if zero velocity
@@ -2321,24 +2331,21 @@ rest:       lda SEQ_TEMPO       ; Reset tempo countdown
             sta SEQ_COUNT       ; ,,
             lsr                 ; Set the time at which the note is
             sta HALF_TEMPO      ;   turned off
-            rts
-
-; Stop the sequencer            
-; For disk operations
-StopSeq:    ldx SEQ_LAST        ; Turn off previous note
-            ldy #0              ;   ,,
-            jsr NOTEOFF         ;   ,,
-            lda #0              ; Turn off sequencer
-            sta SEQ_XPORT       ; ,,
-            lda #" "            ; Turn off sequence annunciator
-            sta SCREEN+21       ; ,, 
-            rts
+            ldy SEQ_PLAY_IX     ; Set Y for ShowStep
+            ; Fall through to ShowStep
             
 ; Show Step
 ; Step number in Y (zero-indexed)
-ShowStep:   lda VELOCITY,y      ; Is this step a rest?
+ShowStep:   cpy SEQ_REC_IX      ; If this is a new step, show the
+            bne ch_rest         ;   cursor
+            ldx #TXTCURSOR      ;   ,,
+            stx SCREEN+18       ;   ,,
+            ldx #" "            ;   ,,
+            stx SCREEN+19       ;   ,,
+            bne only_step
+ch_rest     lda VELOCITY,y      ; Is this step a rest?
             bne show_both       ; ,,
-            ldx #TXTCURSOR      ; If so, clear the note name and show only
+            ldx #18             ; ,, Else, "R" for rest
             stx SCREEN+18       ;   the step number
             ldx #" "            ;   ,,
             stx SCREEN+19       ;   ,,
@@ -2353,7 +2360,7 @@ notef:      tax                 ; X is now the remainder
             lda NoteName,x      ; Get the note name
             sta SCREEN+18       ;   ,,
             lda Accidental,x    ;   and accidental
-            sta SCREEN+19       ;   ,,   
+            sta SCREEN+19       ;   ,,
 only_step:  iny                 ; Increment step number by 1 for 1-indexed
             tya                 ;   display
             jsr TwoDigNum       ; Show step number
