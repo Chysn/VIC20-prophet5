@@ -2382,8 +2382,12 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             jsr GETMSG          ; Has a complete MIDI message been received?
             bcc irq_r           ; ,,
             cmp #ST_NOTEON      ; And is it a note on message?
+            beq note_on         ; ,, If so, add the step to memory and show
+            cmp #ST_NOTEOFF     ; Is it a note off message?
             bne irq_r           ; ,,
-            jsr GETCH           ; Is this note on message on the specified
+            ldy SEQ_REC_IX      ; ,, If so, show cursor
+            jmp note_off        ; ,,
+note_on:    jsr GETCH           ; Is this note on message on the specified
             cmp MIDI_CH         ;  MIDI channel?
             bne irq_r           ;  ,,
             lda SEQ_REC_IX      ; Is there any space left in the sequencer?
@@ -2394,9 +2398,10 @@ IRQSR:      lda SEQ_XPORT       ; Is Play enabled?
             sta VELOCITY,y      ;   and store velocity
             txa                 ; Now move note number to A
             sta SEQUENCE,y      ;   and store note number
-            jsr ShowStep        ; Show step number and note name
             iny                 ; Increment the record index
             sty SEQ_REC_IX      ; ,,
+            dey                 ; Show the PREVIOUS step on note on
+note_off:   jsr ShowStep        ; Show step number and note name
             jmp IRQ
 playback:   dec SEQ_COUNT       ; If play is enabled, do the countdown
             beq adv             ; Advance sequencer if count is 0
