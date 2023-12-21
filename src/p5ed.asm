@@ -212,6 +212,7 @@ F_MUTATIONS = 15                ; Number of mutations
 F_HEX       = 16                ; Full-page hex view
 F_TEMPO     = 17                ; Tempo in BPM
 F_QCOMP     = 18                ; Q Compensation
+F_BTMODE    = 19                ; Bi-Timbral Mode
 
 ; System Resources
 CINV        = $0314             ; ISR vector
@@ -431,7 +432,6 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             ldy PAGE            ; Keep track of the index for the current
             lda FIELD_IX        ;   page
             sta LAST_LIB_IX,y   ;   ,,
-            sta DRAW_IX         ; Keep track of draw updates for field
 pf_r:       jmp MainLoop
 
 ; Next Library Entry
@@ -1162,22 +1162,11 @@ disk_error: lda #2
 
 
 ; Disk Load
-; When Commodore is held, enables Merge load, which loads voices from
-; the active index
-GoLoad:     lda SHIFT           ; Check for Commodore key
-            cmp #2              ; ,,
-            bne load_all        ; ,,
-            sec                 ; Enable merge if Commodore is pressed
-            ror COMMODORE       ; ,,
-load_all:   jsr CLALL
+GoLoad:     jsr CLALL
             jsr Popup
             lda #<LoadLabel
             ldy #>LoadLabel
-            bit COMMODORE
-            bpl load_lab
-            lda #<MergeLabel
-            ldy #>MergeLabel
-load_lab:   jsr PrintStr    
+            jsr PrintStr    
             jsr SetName         ; Get name from user
             bcc start_load
             jmp disk_canc
@@ -1201,11 +1190,7 @@ start_load: lda #0              ; Turn off KERNAL messages
 disk_err2:  bcs disk_error      ; ,,
             ldx #SM_LOADING
             jsr Status       
-            bit COMMODORE       ; If Merge, start loading from current index
-            bpl not_merge       ; ,,
-            ldy CURLIB_IX       ; ,,
-            .byte $3c           ; Skip word (SKW)
-not_merge:  ldy #0              ; Initialize disk library index
+            ldy CURLIB_IX       ; Initialize library pointer
             sty DISKLIB_IX      ; ,,
 -next_rec:  ldy DISKLIB_IX      ; Get next library pointer
             jsr SetLibPtr       ; Get next library pointer
@@ -2504,44 +2489,23 @@ rem:        eor #$ff            ; Handle the remainder by looking up 255-R
             iny                 ; ,,
             cpy #8              ; ,,
             bne loop            ; ,,
-            rts                  ; ,,
+            rts                 ; ,,
            
 ; Draw Switch
 ; At field location            
-Switch:     cmp #1
-            bne s_off
-            lda #SW_ON
-            .byte $3c 
-s_off:      lda #SW_OFF 
-            ldx #0
-            sta (FIELD,x)
-            rts
-
-; Draw Enum Field  - Tracking          
-Track:      cmp #2
-            bne t_ch_1
-            lda #<FullTrack
-            ldy #>FullTrack
-            jmp WriteText
-t_ch_1:     cmp #1
-            bne t_0
-            lda #<HalfTrack
-            ldy #>HalfTrack
-            jmp WriteText
-t_0:        lda #<NoTrack
-            ldy #>NoTrack
-            jmp WriteText
+Switch:     cmp #1              ; If the value is 1, the switch is ON
+            bne s_off           ; ,,
+            lda #SW_ON          ; ,, So set the display character
+            .byte $3c           ; ,,
+s_off:      lda #SW_OFF         ; If the switch is 0, the switch if OFF
+            ldx #0              ; Store the display character in the field
+            sta (FIELD,x)       ;   screen address
+            cpy #12             ; Special case - When the KEYBOARD switch is
+            bne switch_r        ;   changed, redraw the Osc B Frequency field,
+            ldy #9              ;   because its displayed value is dependent
+            jsr DrawField       ; ,,
+switch_r:   rts
                    
-; Draw Enum Field - Filter Revision       
-FiltRev:    cmp #1
-            bne f_0
-            lda #<Rev3
-            ldy #>Rev3
-            jmp WriteText
-f_0:        lda #<Rev1
-            ldy #>Rev1
-            jmp WriteText
-
 ; Draw Name Field           
 Name:       ldy #20
             lda #" "
@@ -2551,36 +2515,24 @@ Name:       ldy #20
             lda #65             ; Offset for name location
             ldy #>CURVCE        ; Current program location
             jmp WriteText
-            
-; Draw Enum Field - Retrigger
-Retrigger:  cmp #5
-            bne r_ch_4
-            lda #<HIR
-            ldy #>HIR
+                 
+; Draw Enum Field
+; (Track, Revision, Retrigger, Bi-Timbral)       
+Enum:       sty ANYWHERE        ; Save the NRPN for comparison
+            ldx #(EnumInt-EnumNRPN-1)
+-loop:      lda EnumNRPN,x      ; Is the entry the corrent NRPN?
+            cmp ANYWHERE        ; ,,
+            bne next_enum
+            lda EnumInt,x       ; Does the entry match the NRPN value?
+            cmp CURVCE,y        ; ,,
+            beq found_enum      ; If so, write its text
+next_enum:  dex
+            bpl loop
+            rts 
+found_enum: lda EnumTxtH,x
+            tay
+            lda EnumTxtL,x
             jmp WriteText
-r_ch_4:     cmp #4
-            bne r_ch_3
-            lda #<HI
-            ldy #>HI
-            jmp WriteText
-r_ch_3:     cmp #3
-            bne r_ch_2
-            lda #<LAR
-            ldy #>LAR
-            jmp WriteText
-r_ch_2:     cmp #2
-            bne r_ch_1
-            lda #<LAS
-            ldy #>LAS
-            jmp WriteText
-r_ch_1:     cmp #1
-            bne r_0:
-            lda #<LOR
-            ldy #>LOR
-            jmp WriteText
-r_0:        lda #<LO
-            ldy #>LO
-            jmp WriteText 
             
 ; Draw 1-Indexed Numeric Field
 Num1Ind:    clc 
@@ -2604,12 +2556,24 @@ one_dig:    pla
             sta (FIELD),y
             rts
 
-; Draw Frequency (C 0 - C 4)            
-Freq:       cmp #$61            ; Maximum value (for display purposes) is C4
-            bcc getoct          ; ,, even though the P5 OS allows the full range
-            lda #$60            ; ,,
-getoct:     lsr                 ; Divide the value by 2 (2 increments per note)
-            ldx #0              ; Get the octave number by subtracting 12
+; Draw Frequency
+; For Oscillator A, C0-C4
+; For Oscillator B, C0-C4, or C0-C9 if the Keyboard switch is ON
+Freq:       ldx #48             ; Default upper range for C0-C4
+            cpy #1              ; Is this the Oscillator B NRPN?
+            bne c0_4            ; ,, If A, use C0-C4 range
+            ldy CURVCE+12       ; Is the "Keyboard" switch ON?
+            bne c0_4            ;    If so, it's a C0-C4 range
+            clc                 ; Add one to the field, for display only...
+            adc #1              ;   The range is C#0 to C9, with 0 being C#0 and
+            ldx #108            ;   107 being C9, so +1 to correct display
+            bcc ch_hi           ;   then constrain high range to 108
+c0_4:       lsr                 ; Divide the value by 2 (2 increments per note)
+ch_hi:      stx ANYWHERE        ; Check the proper upper boundary for the
+            cmp ANYWHERE        ;   selected frequency range
+            bcc get_oct         ;   ,,
+            lda ANYWHERE        ;   and enforce it
+get_oct:    ldx #0              ; Get the octave number by subtracting 12
 -loop:      cmp #12             ;   for each octave. The octave number will be 
             bcc haveoct         ;   X, and the note is the remainder, A
             ;sec                ;   ,, (we know carry is already set)
@@ -2789,15 +2753,13 @@ QComp:      lsr                 ; If incremented, there will be a value like $81
             jmp q_disp          ; Display the Q Comp parameter value
 q_dec:      plp                 ; Discard processor status
 q_disp:     ora #$30            ; Convert to screen code and write to the field
-            ldy #0              ; ,,
-            sta (FIELD),y       ; ,,
+            ldx #0              ; ,,
+            sta (FIELD,x)       ; ,,
             asl                 ; Shift to high nybble to become the ACTUAL 
             asl                 ;   stored value. This shifts away the $30
             asl                 ;   of the screen code 
             asl                 ;   ,,
-            ldy DRAW_IX         ; Store the weird value in the program buffer
-            ldx FNRPN,y         ; Get the NRPN index
-            sta CURVCE,x        ; Store the value
+            sta CURVCE,y        ; Store the value
             rts
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2871,17 +2833,29 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
 ; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
-; 17=Tempo, 18=Q Comp, 19=MIDI Channel
-TSubL:      .byte <ValBar-1,<VceLine-1,<Switch-1,<Track-1
-            .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
+; 17=Tempo, 18=Q Comp, 19=MIDI Channel, 20 Bi-Timbral Mode
+TSubL:      .byte <ValBar-1,<VceLine-1,<Switch-1,<Enum-1
+            .byte <Num-1,<Num-1,<Enum-1,<Name-1,<Num-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
-            .byte <QComp-1
-TSubH:      .byte >ValBar-1,>VceLine-1,>Switch-1,>Track-1
-            .byte >Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1,>Freq-1
+            .byte <QComp-1,<Enum-1
+TSubH:      .byte >ValBar-1,>VceLine-1,>Switch-1,>Enum-1
+            .byte >Num-1,>Num-1,>Enum-1,>Name-1,>Num-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
-            .byte >QComp-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,0 , 0, 8, 1,0, 0,0,16,0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,96,15,11,64,0,10,0,80,112
+            .byte >QComp-1,>Enum-1
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,16,  0,0
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,80,112,2
+
+; Enum NRPN and locations
+EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,100,100,100
+EnumInt:    .byte 0,  1, 2, 0, 1, 0, 1, 2, 3, 4, 5,  0,  1,  2
+EnumTxtL:   .byte <NoTrack,<HalfTrack,<FullTrack
+            .byte <Rev1,<Rev3
+            .byte <LO,<LOR,<LAS,<LAR,<HI,<HIR
+            .byte <NOR,<STC,<SPL
+EnumTxtH:   .byte >NoTrack,>HalfTrack,>FullTrack
+            .byte >Rev1,>Rev3
+            .byte >LO,>LOR,>LAS,>LAR,>HI,>HIR
+            .byte >NOR,>STC,>SPL
 
 ; Enum field values
 NoTrack:    .asc "NONE",0       ; Filter keyboard modes
@@ -2915,14 +2889,14 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     32,     48,     61,    77,       78,     86
+TopParamIX: .byte 0,      17,     32,     48,     66,    82,       83,     92
 
 ; Field data
 ; Field page number (0-3)
 FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
+            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
             .byte 5
             .byte 6,6,6,6,6,6,6,6,6
@@ -2933,7 +2907,7 @@ LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,6,7,8,9,10,13,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
-            .byte 0,1,2,3,6,7,8,9,10,11,12,13,14
+            .byte 0,1,2,3,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
             .byte 5,6,7,8,11,12,15,16,17
@@ -2943,7 +2917,7 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
 FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
-            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14
+            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 1
             .byte 14,14,14,14,14,14,14,14,14
@@ -2965,6 +2939,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
             .byte F_WHEEL,F_SWITCH,F_SWITCH,F_VALUE
             .byte F_SWITCH,F_SWITCH,F_VALUE
+            .byte F_BTMODE,F_SWITCH,F_VALUE,F_VALUE,F_FREQ ; P10 parameters
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
@@ -2981,6 +2956,8 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50,51
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98
+            .byte 100,101,102,103,104 ; P10 parameters
+
             ; The following are not really NRPN numbers, but use the CURVCE
             ; storage for menu settings
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Library View
@@ -3061,11 +3038,11 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"AFT  >FILTER",CR
             .asc RT,TL,TL,TL,"  >LFO",CR
             .asc RT,"     AMT"
-            ;.asc CR,RT,"P10  MODE",CR
-            ;.asc RT,TL,TL,TL,"  LAYER B",CR
-            ;.asc RT,"     LEVEL A",CR
-            ;.asc RT,"     LEVEL B",CR
-            ;.asc RT,"     SPLIT"
+            .asc CR,RT,"P10  MODE",CR
+            .asc RT,TL,TL,TL,"  LAYER B",CR
+            .asc RT,"     LEVEL A",CR
+            .asc RT,"     LEVEL B",CR
+            .asc RT,"     SPLIT"
             .asc 00 
             
 Setup:      .asc 30,CR,"   ED FOR PROPHET-5",CR
@@ -3099,7 +3076,7 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," V    ",30," SEND VOICE(S)",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
             .asc 5," G    ",30," GENERATE VOICE",CR
-            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,"L",30," MERGE",CR
+            .asc 5," L    ",30," LOAD ",CR
             .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,"S",30," VOICE",CR
             .asc 5," X    ",30," HEX VIEW",CR
             .asc 5," RUN  ",30," SEQ PLAY/STOP",CR
@@ -3139,7 +3116,6 @@ GrpLabel:   .asc 5,"CHANGE",CR
 ReqLabel:   .asc 5,"REQUEST #",30,0
 SaveLabel:  .asc 5,"SAVE",30,0
 LoadLabel:  .asc 5,"LOAD",30,0
-MergeLabel: .asc 5,"MERGE",30,0
 SendMenu:   .asc 5,"SEND VOICE",CR
             .asc RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROGRAM"," ",RVON,"E",RVOF,"DIT",CR
             .asc RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
