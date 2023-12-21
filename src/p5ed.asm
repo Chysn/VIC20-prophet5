@@ -28,7 +28,7 @@ Vectors:    .word Start         ; Start
 FPS         = 120               ; IRQs per second
 PROCSP      = 1020000           ; Processor speed in cycles per second
 IRQ_C       = PROCSP / FPS      ; IRQ countdown value
-UNDOS       = 32                ; Number of undo levels
+UNDOS       = 101               ; Number of undo levels + 1
 SEQS        = 64                ; Number of sequencer steps
 
 ; Application Memory
@@ -85,7 +85,7 @@ MUTATE      = CURVCE+$a8        ; Mutate flag
 SEQ_REC_IX  = CURVCE+$a9        ; Sequence record index
 
 ; Application Data Storage
-UNDO_NRPN   = $02a2             ; NRPN for undo level (32 levels)
+UNDO_NRPN   = $3c00             ; NRPN for undo level (99 levels)
 UNDO_VAL    = UNDO_NRPN+UNDOS   ; Values for undo level
 SEQUENCE    = $033c             ; Sequence note data (up to 64 steps)
 VELOCITY    = SEQUENCE+SEQS     ; Sequence velocity data (up to 64 steps)
@@ -431,6 +431,7 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             ldy PAGE            ; Keep track of the index for the current
             lda FIELD_IX        ;   page
             sta LAST_LIB_IX,y   ;   ,,
+            sta DRAW_IX         ; Keep track of draw updates for field
 pf_r:       jmp MainLoop
 
 ; Next Library Entry
@@ -1307,8 +1308,8 @@ Undo:       lda SHIFT           ; Commodore must be held for Undo
             jsr DrawByNRPN      ; ,,
             ldy UNDO_LEV
             jsr TwoDigNum
-            stx STATUSDISP+20
-            sta STATUSDISP+21
+            stx STATUSDISP+19
+            sta STATUSDISP+20
 undo_r:     jmp MainLoop          
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2630,8 +2631,8 @@ haveoct:    pha                 ; Save the note number for later lookup
             sta (FIELD),y       ;   ,,
             rts
             
-; Draw Program Line   
-PrgLine:    lda DRAW_IX         ; Where we are on the page
+; Draw Voice Line   
+VceLine:    lda DRAW_IX         ; Where we are on the page
             clc                 ; Add the library view's offset
             adc VIEW_START      ; ,,
             sec                 ; Subtract the page's parameter offset
@@ -2782,8 +2783,8 @@ QComp:      lsr                 ; If incremented, there will be a value like $81
             lsr                 ;   captures the high nybble in A, and the
             lsr                 ;   direction in Carry, with Carry Set=decrement
             bcs q_dec           ;   Skip any adjustment of high nybble value
-            plp                 ; 
-            bcc q_disp
+            plp                 ; Carry set = a change was made
+            bcc q_disp          ; If Carry clear, no change
             adc #0              ; ,,
             jmp q_disp          ; Display the Q Comp parameter value
 q_dec:      plp                 ; Discard processor status
@@ -2871,11 +2872,11 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
 ; 17=Tempo, 18=Q Comp, 19=MIDI Channel
-TSubL:      .byte <ValBar-1,<PrgLine-1,<Switch-1,<Track-1
+TSubL:      .byte <ValBar-1,<VceLine-1,<Switch-1,<Track-1
             .byte <Num-1,<Num-1,<FiltRev-1,<Name-1,<Num-1,<Retrigger-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
             .byte <QComp-1
-TSubH:      .byte >ValBar-1,>PrgLine-1,>Switch-1,>Track-1
+TSubH:      .byte >ValBar-1,>VceLine-1,>Switch-1,>Track-1
             .byte >Num-1,>Num-1,>FiltRev-1,>Name-1,>Num-1,>Retrigger-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
             .byte >QComp-1
@@ -3107,7 +3108,7 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             
 View:       .asc 30,CR,"     LIBRARY VIEW",CR
             .asc "     ",TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,CR
-            .asc "  # PRG NAME",CR
+            .asc " V# PRG NAME",CR
             .asc 00
             
 HexView:    .asc 30,CR,"       HEX VIEW",CR
