@@ -1838,7 +1838,7 @@ LibViewF:   lda PAGE            ; Are we on the Library View?
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
-            jsr PopFields       ; ,,
+            jsr ShowPrgNum      ; ,,
 lvf_r:      rts
 
 ; Put Hex on Screen
@@ -2451,8 +2451,10 @@ sy_store:   ldy SYIN_IX         ; Get the index and store the byte there
             sta (SYIN),y        ; ,,
             cmp #ST_ENDSYSEX    ; If the sysex has ended, perform end
             beq sydone          ; ,,
-            inc SYIN_IX         ; Increment storage index. If it exceeds 255,
-            bne r_isr           ;   end the sysex, for a likely error status
+            inc SYIN_IX         ; Increment storage index. If it exceeds 160
+            lda SYIN_IX         ;   end the sysex, for a likely error message,
+            cmp #$a0            ;   but we don't want it to overwrite subsequent
+            bcc r_isr           ;   voice's memory.
 sydone:     ldy #0              ; Set listen flag off
             sta LISTEN          ; ,,
             iny                 ; Set ready flag on
@@ -2602,7 +2604,8 @@ VceLine:    lda DRAW_IX         ; Where we are on the page
             sec                 ; Subtract the page's parameter offset
             sbc TopParamIX+4    ; ,,
             sta VIEW_IX         ; Store in view index
-            jsr Validate        ; Is it a valid program?
+            tay                 ; Is it a valid program?
+            jsr Validate        ; ,,
             beq pl_ok           ; ,,
             jsr NewLib
 pl_ok:      ldy VIEW_IX         ; Add the two-digit program number first
@@ -2845,7 +2848,7 @@ TSubH:      .byte >ValBar-1,>VceLine-1,>Switch-1,>Enum-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,16,  0,0
 TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,80,112,2
 
-; Enum NRPN and locations
+; Enum NRPN, integer values, and enum text locations
 EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,100,100,100
 EnumInt:    .byte 0,  1, 2, 0, 1, 0, 1, 2, 3, 4, 5,  0,  1,  2
 EnumTxtL:   .byte <NoTrack,<HalfTrack,<FullTrack
@@ -2857,7 +2860,7 @@ EnumTxtH:   .byte >NoTrack,>HalfTrack,>FullTrack
             .byte >LO,>LOR,>LAS,>LAR,>HI,>HIR
             .byte >NOR,>STC,>SPL
 
-; Enum field values
+; Enum field text
 NoTrack:    .asc "NONE",0       ; Filter keyboard modes
 HalfTrack:  .asc "HALF",0       ; ,,
 FullTrack:  .asc "FULL",0       ; ,,
