@@ -1464,22 +1464,7 @@ SwitchPage: lda #0              ; Clear commodore function flag
 PopFields:  ldy PAGE            ; Recall the last field from this page
             lda LAST_LIB_IX,y   ;   ,,
             sta FIELD_IX        ;   ,,
-pf_prg:     ldy CURLIB_IX       ; Get current library entry 
-            iny                 ; Library entries are 1-indexed for display
-            jsr TwoDigNum       ; Get the number
-            dey                 ; Return library to 0-indexed
-            ora #$80            ; Make it reverse
-            pha                 ; Save it to handle tens place
-            txa                 ; ,,
-            ora #$80            ; Make that reverse
-            tax                 ; Get tens place back
-            pla                 ; ,,
-            stx STATUSDISP      ; Show the tens place as a numeral
-            sta STATUSDISP+1    ; Show the ones place as a numeral
-            lda #$6f            ; Show a little header for the library number
-            sta STATUSDISP-22   ;   so it's easier to read
-            sta STATUSDISP-21   ;   ,,
-            ldx PAGE
+pf_prg:     ldx PAGE
             cpx #7              ; If Help page, do not populate any fields
             beq ShowPrgNum      ; ,, and do not draw a cursor
             ldy TopParamIX,x
@@ -1513,7 +1498,7 @@ dc_col:     lda FType,y         ; Color the field the selected color only
             sta (FIELD,x)       ;   ,,
             ; Fall through to ShowPrgNum
 
-; Show Current Program Number
+; Show Current Voice and Program Numbers
 ShowPrgNum: ldy CURLIB_IX       ; Get current program number
             jsr PrgLoc          ; ,,
             ldy #2              ; Show program number or unset (---)
@@ -1521,6 +1506,21 @@ ShowPrgNum: ldy CURLIB_IX       ; Get current program number
             sta STATUSDISP+2,y  ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
+            ldy CURLIB_IX       ; Get current library entry 
+            iny                 ; Library entries are 1-indexed for display
+            jsr TwoDigNum       ; Get the number
+            dey                 ; Return library to 0-indexed
+            ora #$80            ; Make it reverse
+            pha                 ; Save it to handle tens place
+            txa                 ; ,,
+            ora #$80            ; Make that reverse
+            tax                 ; Get tens place back
+            pla                 ; ,,
+            stx STATUSDISP      ; Show the tens place as a numeral
+            sta STATUSDISP+1    ; Show the ones place as a numeral
+            lda #$6f            ; Show a little header for the library number
+            sta STATUSDISP-22   ;   so it's easier to read
+            sta STATUSDISP-21   ;   ,,            
             rts
           
 ; Clear Previous Cursor 
