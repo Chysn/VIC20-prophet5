@@ -331,8 +331,14 @@ lib_ok:     dec IX
             jsr SelLib          ; ,,
             ldx #SM_WELCOME     ; Show welcome message in status bar
             jsr Status          ; ,,
-            jsr SwitchPage      ; Generate the edit page
-            cli                 ; Start interrupt            
+            cli                 ; Start Interrupt
+            ; Fall through to MainSwitch
+
+
+; Switch page and Main Loop
+; A shortcut for a common pattern, redraw the page, then
+; go back to main loop.
+MainSwitch: jsr SwitchPage      ; Generate the edit page
             ; Fall through to MainLoop
 
 ; Main Program Loop
@@ -476,10 +482,10 @@ PageSel:    sec
             ldy SHIFT           ; If C= or SHIFT is held down, jump to
             bne LibView         ;   Library selection
             cmp PAGE            ; If already on this page, don't redraw
-            beq read_r          ; ,,
+            beq pagesel_r       ; ,,
             sta PAGE            ; Set the page and draw it
             jsr SwitchPage      ; ,,
-read_r:     jmp MainLoop
+pagesel_r:  jmp MainLoop
             
 ; Select Library Section
 LibView:    tay                 ; Get library division for this key
@@ -493,8 +499,7 @@ LibView:    tay                 ; Get library division for this key
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
             jsr PopFields       ; ,,            
-            jsr SwitchPage      ; Draw the page header
-            jmp MainLoop
+            jmp MainSwitch
 
 ; Increment Field by 1
 IncValue:   lda FIELD_IX        ; For the tempo field type, increment means
@@ -589,8 +594,7 @@ sel_prog:   tya                 ; Field index
             jsr SelLib          ; ,,
             lda #0              ; Drill down to edit page
             sta PAGE            ; ,,
-            jsr SwitchPage      ; ,,
-            jmp MainLoop
+            jmp MainSwitch
 edit_name:  jsr ClrCursor       ; Clear cursor during name edit
             jsr FieldLoc        ; Get actual starting position of Name field
 pos_cur:    jsr find_end        ; Set IX to the character after the last one
@@ -703,10 +707,9 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
 no_mutate:  jsr SetCurPtr       ; Pack program into library
             jsr PackLib         ; ,,
             jsr BufferSend      ; Send the edit buffer            
-            jsr SwitchPage      ; Update the fields in the interface
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
-gen_r:      jmp MainLoop
+            jmp MainSwitch
              
 ; Set Program Number
 ; for current voice                   
@@ -748,8 +751,7 @@ do_set:     ldy #4              ; Get the user input from PTRD and update the
             iny                 ;   ,,
             lda PTRD+1          ;   ,,
             sta (PTR),y         ;   ,,
-setp_r:     jsr SwitchPage      ; Housekeeping. Redraw the page.
-            jmp MainLoop
+setp_r:     jmp MainSwitch
             
 ; Change      
 SetGrp:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
@@ -823,8 +825,7 @@ gs_next:    ldy IX
             bne loop
             ldx #SM_OK          ; Show success status
             jsr Status          ; ,,
-setgrp_r:   jsr SwitchPage
-            jmp MainLoop
+setgrp_r:   jmp MainSwitch
             
 ; System Exclusive Voice Dump
 ; of program, bank, or group
@@ -846,7 +847,8 @@ vgetkey:    jsr Keypress        ; Get pressed key
             beq dump_r          ; ,,
             cmp #"E"            ; Dumping edit buffer?
             bne ch_prg          ; ,,
-            jmp BufferSend      ; ,,
+            jsr BufferSend      ; ,,
+            jmp MainSwitch      ; 
 ch_prg:     cmp #"P"            ; Dumping this program?
             bne ch_bank         ; ,,
             jmp DumpPrg         ; ,,
@@ -858,8 +860,7 @@ ch_group:   cmp #"G"            ; Dumping this program's group?
             jmp DumpGroup       ; ,,
 dump_r:     ldx #SM_BLANK       ; No dump done, clear status
             jsr Status          ; ,,
-            jsr SwitchPage      ; Get rid of window
-dump_r2:    jmp MainLoop
+            jmp MainSwitch
 
 ; Erase the current program      
 Erase:      jsr Popup
@@ -878,8 +879,7 @@ Erase:      jsr Popup
             .byte $3c           ; Skip word (SKW)
 erase_r:    ldx #SM_BLANK
             jsr Status
-            jsr SwitchPage            
-erase_r2:   jmp MainLoop
+            jmp MainSwitch
 
 ; Copy the current voice
 ; to another location
@@ -1001,8 +1001,7 @@ cp_status:  ldx #SM_COPIED      ; Indicate copy success
             lda PTR             ; Unpack swapped voice into here
             ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
-copy_r:     jsr SwitchPage
-            jmp MainLoop
+copy_r:     jmp MainSwitch
 
 ; Sequencer control
 Sequencer:  ldx SEQ_LAST        ; Turn off last note whenever a transport
@@ -1077,8 +1076,7 @@ GoHelp:     lda #7
             cmp PAGE
             beq setup_r
             sta PAGE
-            jsr SwitchPage
-setup_r:    jmp MainLoop
+setup_r:    jmp MainSwitch
 
 ; Disk Save
 ; When Commodore is held, save only the active voice
@@ -1158,8 +1156,7 @@ disk_error: lda #2
             jsr CLRCHN
             ldx #SM_FAIL
             jsr Status
-            jsr SwitchPage
-            jmp MainLoop
+            jmp MainSwitch
 
 
 ; Disk Load
@@ -1238,8 +1235,7 @@ eof:        and #$40            ; If this is a read error, show error message
             ; Shared exit points for both save and load
 disk_ok:    ldx #SM_OK          ; Show success message
             jsr Status          ; ,,
-disk_canc:  jsr SwitchPage      ; Back to main
-            jmp MainLoop        ; ,,
+disk_canc:  jmp MainSwitch      ; ,,
             
 ; Request Program
 Request:    jsr SetCurPtr       ; Get pointer to sysex in library
@@ -1269,8 +1265,7 @@ req_c:      jsr Popup
             jsr SendSysex       ; Send the request message
             ldx #SM_SENT        ; Show status and await dump from Prophet 5
 req_s:      jsr Status          ; ,,
-req_r2:     jsr SwitchPage      ; Redraw the page
-            jmp MainLoop
+req_r2:     jmp MainSwitch      
          
 ; Undo
 ; If undo level > 0, then get last NRPN and set it to its last value           
@@ -1898,8 +1893,7 @@ prstr_r:    rts
 DumpPrg:    jsr SetCurPtr
             sty IX              ; Store in temporary index for status message
             jsr DumpLib
-            jsr SwitchPage
-            jmp MainLoop
+            jmp MainSwitch
 
 ; Dump Bank or Group
 ; Find all members of the current program's bank and/or group and dump them     
@@ -1940,8 +1934,7 @@ d_nomatch:  inc IX              ; Move to the next library entry
             ldy IX              ; Check the search index for the end
             cpy #LIB_TOP        ; ,,
             bne loop
-            jsr SwitchPage
-            jmp MainLoop
+            jmp MainSwitch
             
 ; Dump a Library Entry
 ; Set PTR before the call with SetLibPtr or Validate            
@@ -1990,8 +1983,7 @@ BufferSend: lda #<EditBuffer
             .byte $3c           ; Skip word (SKW)
 bsend_ok:   ldx #SM_SENT
             jsr Status
-bsend_r:    jsr SwitchPage
-            jmp MainLoop
+bsend_r:    rts
             
 ; Unpack to Buffer
 ; A = low byte / Y = high byte of $9f-byte sysex message ($f0 - $f7)
