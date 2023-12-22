@@ -702,6 +702,7 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
             bne mutate          ; Go back for more
 no_mutate:  jsr SetCurPtr       ; Pack program into library
             jsr PackLib         ; ,,
+            jsr BufferSend      ; Send the edit buffer            
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
             jsr SwitchPage      ; Update the fields in the interface
