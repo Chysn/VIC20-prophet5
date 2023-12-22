@@ -703,9 +703,9 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
 no_mutate:  jsr SetCurPtr       ; Pack program into library
             jsr PackLib         ; ,,
             jsr BufferSend      ; Send the edit buffer            
+            jsr SwitchPage      ; Update the fields in the interface
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
-            jsr SwitchPage      ; Update the fields in the interface
 gen_r:      jmp MainLoop
              
 ; Set Program Number
