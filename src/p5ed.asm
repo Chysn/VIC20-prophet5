@@ -489,6 +489,7 @@ LibView:    tay                 ; Get library division for this key
             sta PAGE            ; ,,
             ldy VIEW_START      ; Select the view start entry on view load
             sty CURLIB_IX       ; ,,
+            sty TGTLIB_IX       ; ,, set target library
             jsr SelLib          ; ,,
             ldy CURLIB_IX       ; Show program number
             jsr PopFields       ; ,,            
@@ -574,8 +575,7 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             sta CURVCE,x        ;   and save that
             jmp val_ch          ;   ,,
 adv_f:      inc CURVCE,x        ;   ,,
-val_ch:     ldx FIELD_IX        ;   Send NRPN, if enabled, handle Undo
-            jsr NRPNpost        ;   ,,
+val_ch:     jsr NRPNpost        ;   ,,
             ldy FIELD_IX        ;   Draw the new field value
             jsr DrawField       ;   ,,
 edna_r:     jmp MainLoop        ;   ,,
@@ -2456,9 +2456,9 @@ sy_store:   ldy SYIN_IX         ; Get the index and store the byte there
             cmp #$a0            ;   but we don't want it to overwrite subsequent
             bcc r_isr           ;   voice's memory.
 sydone:     ldy #0              ; Set listen flag off
-            sta LISTEN          ; ,,
+            sty LISTEN          ; ,,
             iny                 ; Set ready flag on
-            sta READY           ; ,,
+            sty READY           ; ,,
             lda TGTLIB_IX       ; Copy library index to current library index 
             sta CURLIB_IX       ; ,,
             cmp #LIB_TOP-1      ; If not at the top entry yet, advance target
@@ -2838,11 +2838,11 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
 ; 17=Tempo, 18=Q Comp, 19=MIDI Channel, 20 Bi-Timbral Mode
 TSubL:      .byte <ValBar-1,<VceLine-1,<Switch-1,<Enum-1
-            .byte <Num-1,<Num-1,<Enum-1,<Name-1,<Num-1,<Enum-1,<Freq-1
+            .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Num1Ind-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
             .byte <QComp-1,<Enum-1
 TSubH:      .byte >ValBar-1,>VceLine-1,>Switch-1,>Enum-1
-            .byte >Num-1,>Num-1,>Enum-1,>Name-1,>Num-1,>Enum-1,>Freq-1
+            .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Num1Ind-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
             .byte >QComp-1,>Enum-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,16,  0,0
