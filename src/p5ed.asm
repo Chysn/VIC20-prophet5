@@ -511,7 +511,10 @@ inc_bypass: jsr PrepField       ; Get field value
             bcs id_r            ; Already at maximum, so do nothing
             jsr NRPNpre         ; Pre-change (Undo)
             inc CURVCE,x
-nrpn_msg:   jsr NRPNpost        ; Send NRPN message, handle Undo
+nrpn_msg:   lda PAGE            ; If < and > are pressed on the
+            cmp #4              ;   Library View, do nothing
+            beq topspeed        ;   ,,
+            jsr NRPNpost        ; Send NRPN message, handle Undo
             ldy FIELD_IX
             jsr DrawField
             ldy FIELD_IX
