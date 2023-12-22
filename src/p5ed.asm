@@ -1215,8 +1215,8 @@ eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual
             bne next_rec        ;   ,, If not, use the same DISKLIB_IX again
             ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
             jsr TwoDigNum       ;   in the status area.
-            stx STATUSDISP+19   ;   ,,
-            sta STATUSDISP+20   ;   ,,
+            stx STATUSDISP+18   ;   ,,
+            sta STATUSDISP+19   ;   ,,
             lda DISKLIB_IX      ; Show progress bar
             asl                 ; ,, Multiple progress by 2
             jsr ProgPopup       ; ,,
@@ -1292,8 +1292,8 @@ Undo:       lda SHIFT           ; Commodore must be held for Undo
             jsr DrawByNRPN      ; ,,
             ldy UNDO_LEV
             jsr TwoDigNum
-            stx STATUSDISP+19
-            sta STATUSDISP+20
+            stx STATUSDISP+18
+            sta STATUSDISP+19
 undo_r:     jmp MainLoop          
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1698,9 +1698,9 @@ nc_cl:      dey                 ; ,,
 ; in X            
 Status:     txa 
             pha
-            lda #<(STATUSDISP+11)
+            lda #<(STATUSDISP+10)
             sta FIELD
-            lda #>(STATUSDISP+11)
+            lda #>(STATUSDISP+10)
             sta FIELD+1
             lda StatusH,x
             tay 
@@ -1956,8 +1956,8 @@ dump_ok:    ldx #SM_SENT        ; Success!
             ldy IX              ;   number
             iny                 ;   ,, (which is 1-indexed)
             jsr TwoDigNum       ;   ,,
-            stx STATUSDISP+7    ;   ,,
-            sta STATUSDISP+8    ;   ,,
+            stx STATUSDISP+18   ;   ,,
+            sta STATUSDISP+19   ;   ,,
             rts
             
 ; Send Edit Buffer
