@@ -3078,7 +3078,7 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
             .asc 5," -  + ",30," SELECT VOICE",CR
             .asc 5," CLR  ",30," ERASE VOICE",CR
-            .asc 5," P    ",30," PRG# ",5,RVON,"C=",RVOF,30,"GROUP",CR
+            .asc 5," P    ",30," PRG# ",5,RVON,"C=",RVOF,30,"GROUP#",CR
             .asc 5," C    ",30," COPY ",5,RVON,"C=",RVOF,30,"SWAP",CR
             .asc 5," V    ",30," SEND ",5,RVON,"C=",RVOF,30,"FACTORY",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
