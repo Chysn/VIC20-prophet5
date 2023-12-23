@@ -343,7 +343,9 @@ MainSwitch: jsr SwitchPage      ; Generate the edit page
 
 ; Main Program Loop
 ; Wait for a key, then act on valid commands            
-MainLoop:   lda #$40            ; Debounce the key press
+MainLoop:   lda #0              ; Unset the Commodore key flag
+            sta COMMODORE       ; ,,
+            lda #$40            ; Debounce the key press
 -debounce:  cmp KEY             ; ,,
             bne debounce        ; ,,
 waitkey:    ldx READY           ; If Sysex is ready, handle it
@@ -360,15 +362,20 @@ keydown:    tay                 ; Preserve key pressed
 -loop:      lda KeyCode,x       ;   command key press
             beq MainLoop        ;   ,, 0 delimits command list
             cmp KEYBUFF
-            beq dispatch
+            beq cmd_addr
             inx
             bne loop
-dispatch:   lda CommandH,x      ; Set dispatch address on the stack
+cmd_addr:   lda CommandH,x      ; Set dispatch address on the stack
             pha                 ; ,,
             lda CommandL,x      ; ,,
             pha                 ; ,,
             tya                 ; Put key pressed back in A
-            rts                 ; Dispatch command with key in A
+            ldy SHIFT           ; Check for Commodore key
+            cpy #2              ; ,,
+            bne dispatch        ; ,,
+            sec                 ; Perform swap if Commodore is pressed
+            ror COMMODORE       ; ,,            
+dispatch:   rts                 ; Dispatch command with key in A
 
 ; Handle Incoming SysEx
 SysexReady: lda #0              ; Clear the sysex ready flag
@@ -721,9 +728,8 @@ SetPrg:     ldy CURLIB_IX       ; Get program location to TEMPNAME
             lda PTR             ; Unpack buffer prior to program # change
             ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
-            lda SHIFT           ; If COMMODORE is held, change all groups
-            cmp #2              ;   instead of setting one program number
-            bne set_prg         ;   ,,
+            bit COMMODORE       ; If COMMODORE is held, change all groups
+            bpl set_prg         ;   instead of setting one program number
             jmp SetGrp          ;   ,,
 set_prg:    jsr Popup
             lda #<PrgLabel
@@ -756,7 +762,7 @@ do_set:     ldy #4              ; Get the user input from PTRD and update the
             sta (PTR),y         ;   ,,
 setp_r:     jmp MainSwitch
             
-; Change      
+; Change Group Numbers    
 SetGrp:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
             lda TEMPNAME        ; Is the group set?
@@ -832,7 +838,7 @@ setgrp_r:   jmp MainSwitch
             
 ; System Exclusive Voice Dump
 ; of program, bank, or group
-VoiceSend:  ldy CURLIB_IX       ; If this is not a valid program, cannot
+GoSend:     ldy CURLIB_IX       ; If this is not a valid program, cannot
             jsr Validate        ;   do dump
             bne dump_r          ;   ,,
             jsr Popup           ; Put the dump selection menu 
@@ -845,6 +851,14 @@ VoiceSend:  ldy CURLIB_IX       ; If this is not a valid program, cannot
 all_opt:    lda #<SendMenu      ; Put options into popup window
             ldy #>SendMenu      ;   ,,
 voice_menu: jsr PrintStr        ;   ,,
+            bit COMMODORE       ; Factory flag?
+            bpl vgetkey         ; ,,
+            ldy #0              ; Then show the word "FACTORY" after SEND
+-loop:      lda FactoryLab,y    ; ,,
+            beq vgetkey         ; ,,
+            sta SCREEN+208,y    ; ,,
+            iny                 ; ,,
+            bne loop            ; ,,
 vgetkey:    jsr Keypress        ; Get pressed key
             cpy #CANCEL         ; Check for cancel key
             beq dump_r          ; ,,
@@ -886,13 +900,7 @@ erase_r:    ldx #SM_BLANK
 
 ; Copy the current voice
 ; to another location
-
-GoCopy:     lda SHIFT           ; Check for Commodore key
-            cmp #2              ; ,,
-            bne just_copy       ; ,,
-            sec                 ; Perform swap if Commodore is pressed
-            ror COMMODORE       ; ,,
-just_copy:  jsr Popup
+GoCopy:     jsr Popup
             lda #<CopyLabel
             ldy #>CopyLabel
             bit COMMODORE
@@ -1083,12 +1091,7 @@ setup_r:    jmp MainSwitch
 
 ; Disk Save
 ; When Commodore is held, save only the active voice
-GoSave:     lda SHIFT           ; Check for Commodore key
-            cmp #2              ; ,,
-            bne save_all        ; ,,
-            sec                 ; If held, enable one voice save
-            ror COMMODORE       ; ,,
-save_all:   jsr CLALL
+GoSave:     jsr CLALL
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
@@ -1447,9 +1450,7 @@ no_decinc:  clc
 
 ; Draw Edit Page
 ; at PAGE
-SwitchPage: lda #0              ; Clear commodore function flag
-            sta COMMODORE       ; ,,
-            jsr ClrScr
+SwitchPage: jsr ClrScr
             jsr ClrCursor
             ldx PAGE            ; Acquire current page index
             lda EditH,x         ; Draw that page's field labels
@@ -1892,10 +1893,10 @@ prstr_r:    rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Dump Single Program
 ; At the current library
-; To dump another library, set PTR and call the DumpLib endpoint instead
+; To dump another library, set PTR and call the DumpVce endpoint instead
 DumpPrg:    jsr SetCurPtr
             sty IX              ; Store in temporary index for status message
-            jsr DumpLib
+            jsr DumpVce
             jmp MainSwitch
 
 ; Dump Bank or Group
@@ -1929,7 +1930,7 @@ DumpBank:   clc                 ; Clear DUMPTYPE flag to indicate bank dump
             and #$f8            ; ,,
             cmp S_BANK          ; Does it match the bank?
             bne d_nomatch       ; ,,
-d_match:    jsr DumpLib         ; If it does, dump the library entry
+d_match:    jsr DumpVce         ; If it does, dump the library entry
 d_nomatch:  inc IX              ; Move to the next library entry
             lda IX              ; Draw the value bar based on index
             asl                 ;   ,, (twice the index, actually)
@@ -1939,19 +1940,27 @@ d_nomatch:  inc IX              ; Move to the next library entry
             bne loop
             jmp MainSwitch
             
-; Dump a Library Entry
+; Dump a Voice
 ; Set PTR before the call with SetLibPtr or Validate            
-DumpLib:    ldy #0              ; Set the output index
+DumpVce:    ldy #0              ; Set the output index
 -loop:      lda (PTR),y         ; Get the next byte to output
-            jsr MIDIOUT         ; Send it to the Beige Maze MIDI KERNAL
-            bcs dump_err        ; Show error if timeout
+            cpy #4              ; Is this the group number byte?
+            bne dv_send         ; ,, If not, send
+            bit COMMODORE       ; Is the factory flag set?
+            bpl dv_send         ; ,, If not, send
+            cmp #6              ; Is this already in a Factory group?
+            bcs dv_send         ; ,, If so, send
+            clc                 ; If all the aforementioned conditions pass,
+            adc #5              ;   add 5 to the group number
+dv_send:    jsr MIDIOUT         ; Send it to the Beige Maze MIDI KERNAL
+            bcs dv_err          ; Show error if timeout
             cmp #ST_ENDSYSEX    ; Was this an end-of-sysex status?
-            beq dump_ok         ; If so, dump is done with success
+            beq dv_ok           ; If so, dump is done with success
             iny                 ; Go to the next index
             bne loop            ; If we get all the way to 0, something's wrong
-dump_err:   ldx #SM_FAIL        ; Fail by either (1) timing out at the
+dv_err:     ldx #SM_FAIL        ; Fail by either (1) timing out at the
             jmp Status          ;   interface, or (2) invalid sysex
-dump_ok:    ldx #SM_SENT        ; Success!
+dv_ok:      ldx #SM_SENT        ; Success!
             jsr Status          ; Show the status and the library entry
             ldy IX              ;   number
             iny                 ;   ,, (which is 1-indexed)
@@ -2818,13 +2827,13 @@ KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
-            .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<VoiceSend-1
+            .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<GoSend-1
             .byte <Erase-1,<GoCopy-1,<Sequencer-1,<AddRest-1,<DelNote-1
             .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
-            .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>VoiceSend-1
+            .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>GoSend-1
             .byte >Erase-1,>GoCopy-1,>Sequencer-1,>AddRest+1,>DelNote-1
             .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1
 
@@ -3069,13 +3078,13 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
             .asc 5," -  + ",30," SELECT VOICE",CR
             .asc 5," CLR  ",30," ERASE VOICE",CR
-            .asc 5," P    ",30," PRG# ",5,RVON,"C=",RVOF,"P",30," GRP#",CR
-            .asc 5," C    ",30," COPY ",5,RVON,"C=",RVOF,"C",30," SWAP",CR
-            .asc 5," V    ",30," SEND VOICE(S)",CR
+            .asc 5," P    ",30," PRG# ",5,RVON,"C=",RVOF,30,"GROUP",CR
+            .asc 5," C    ",30," COPY ",5,RVON,"C=",RVOF,30,"SWAP",CR
+            .asc 5," V    ",30," SEND ",5,RVON,"C=",RVOF,30,"FACTORY",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
             .asc 5," G    ",30," GENERATE VOICE",CR
             .asc 5," L    ",30," LOAD ",CR
-            .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,"S",30," VOICE",CR
+            .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,30,"VOICE",CR
             .asc 5," X    ",30," HEX VIEW",CR
             .asc 5," RUN  ",30," SEQ PLAY/STOP",CR
             .asc 5," ",RVON,"C=",RVOF,"RUN",30," SEQ RECORD"
@@ -3128,6 +3137,7 @@ CopyLabel:  .asc 5,"COPY TO",CR
             .asc RT,RT,RT,RT,RT,"VOICE",30,0
 SwapLabel:  .asc 5,"SWAP WITH",CR
             .asc RT,RT,RT,RT,RT,"VOICE",30,0
+FactoryLab: .asc 6,1,3,20,15,18,25,0 ; FACTORY as screen codes
                          
 ; Library Sysex Pointers
 ; Indexed             
