@@ -44,7 +44,7 @@ FIELD_IX    = $0a               ; Current field index
 VIEW_START  = $0b               ; Library view start entry
 COMMODORE   = $0c               ; Commodore key flag (merge, swap, etc.)
 PAGE        = $0e               ; Current page number
-CURLIB_IX   = $0f               ; Current library index
+CVOICE_IX   = $0f               ; Current voice index
 REPEAT      = $10               ; Repeat speed
 KEYBUFF     = $11               ; Last key pressed
 IX          = $12               ; General use index
@@ -65,35 +65,37 @@ DRAW_IX     = $25               ; Drawn field index
 VIEW_IX     = $26               ; Field index in Library View
 HALF_TEMPO  = $27               ; Time left before note off
 UNDO_LEV    = $28               ; Current undo level
-LAST_NRPN   = $29               ; Last NRPN, used for keeping track of Undo
+LAST_FIX    = $29               ; Last field, used for keeping track of Undo
 STRIPE      = $2a               ; Mod 2 state for reverse ($80 when reversed)
 LAST_LIB_IX = $39               ; Last index in Library View (7 bytes)
-LISTEN      = $41               ; Sysex listen flag (jiffy clock not used)
-READY       = $42               ; Sysex ready flag (jiffy clock not used)
-ANYWHERE    = $43               ; Temporary iterator (jiffy click not used)
+LISTEN      = $41               ; Sysex listen flag
+READY       = $42               ; Sysex ready flag
+ANYWHERE    = $43               ; Temporary iterator
+LAST_VCE    = $44               ; Last voice edited, used for undo
 
 ; Application settings
-MIDI_CH     = CURVCE+$a0        ; MIDI channel
-NRPN_TX     = CURVCE+$a1        ; NRPN transmit toggle
-PRGCH_TX    = CURVCE+$a2        ; Program change transmit toggle
-DEVICE_NUM  = CURVCE+$a3        ; Storage Device number
-SEQ_STEPS   = CURVCE+$a4        ; Sequencer Steps
-SEQ_TEMPO   = CURVCE+$a5        ; Sequencer Tempo
-SEED1_PRG   = CURVCE+$a6        ; Generator Seed 1
-SEED2_PRG   = CURVCE+$a7        ; Generator Seed 2
-MUTATE      = CURVCE+$a8        ; Mutate flag
-SEQ_REC_IX  = CURVCE+$a9        ; Sequence record index
+MIDI_CH     = CVOICE+$a0        ; MIDI channel
+NRPN_TX     = CVOICE+$a1        ; NRPN transmit toggle
+PRGCH_TX    = CVOICE+$a2        ; Program change transmit toggle
+DEVICE_NUM  = CVOICE+$a3        ; Storage Device number
+SEQ_STEPS   = CVOICE+$a4        ; Sequencer Steps
+SEQ_TEMPO   = CVOICE+$a5        ; Sequencer Tempo
+SEED1_PRG   = CVOICE+$a6        ; Generator Seed 1
+SEED2_PRG   = CVOICE+$a7        ; Generator Seed 2
+MUTATE      = CVOICE+$a8        ; Mutate flag
+SEQ_REC_IX  = CVOICE+$a9        ; Sequence record index
 
 ; Application Data Storage
-UNDO_NRPN   = $3c00             ; NRPN for undo level (99 levels)
-UNDO_VAL    = UNDO_NRPN+UNDOS   ; Values for undo level
+UNDO_FIX    = $3c00             ; Field Index for undo level (100 levels)
+UNDO_VAL    = UNDO_FIX+UNDOS    ; Values for undo level
+UNDO_VCE    = UNDO_VAL+UNDOS    ; Voice numbers for undo level
 SEQUENCE    = $033c             ; Sequence note data (up to 64 steps)
 VELOCITY    = SEQUENCE+SEQS     ; Sequence velocity data (up to 64 steps)
 TEMPNAME    = VELOCITY+SEQS     ; Name storage. Filename, voice name (20 bytes)
 TEMPBUFF    = $1200             ; Outgoing sysex stage (256 bytes)
 SEED1       = $1200             ; Seed 1 program for generator
 SEED2       = $1280             ; Seed 2 program for generator
-CURVCE      = $1300             ; Current voice indexed buffer (170 bytes)
+CVOICE      = $1300             ; Current voice indexed buffer (170 bytes)
 LIBRARY     = $1400             ; Storage for 64 voices (160x64=10240 bytes)
 LIB_TOP     = LibraryH-LibraryL ; Number of library entries
 
@@ -298,7 +300,7 @@ lib_ok:     dec IX
             sta PAGE            ;   * Edit page number
             sta NRPN_TX         ;   * NRPN Transmit
             sta TGTLIB_IX       ;   * Target library entry index
-            sta CURLIB_IX       ;   * Current library entry index
+            sta CVOICE_IX       ;   * Current library entry index
             sta SEQ_XPORT       ;   * Sequencer transport
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta MUTATE          ;   * Generator mutation enable
@@ -327,7 +329,7 @@ lib_ok:     dec IX
             bpl loop
             
             ; Initialize user interface
-            ldy CURLIB_IX       ; Select first library entry
+            ldy CVOICE_IX       ; Select first library entry
             jsr SelLib          ; ,,
             ldx #SM_WELCOME     ; Show welcome message in status bar
             jsr Status          ; ,,
@@ -382,7 +384,7 @@ SysexReady: lda #0              ; Clear the sysex ready flag
             sta READY           ; ,,
             lda #" "            ; Disappear the MIDI indicator
             sta SCREEN          ; ,,            
-            ldy CURLIB_IX       ; Is this a valid Prophet 5 voice dump?
+            ldy CVOICE_IX       ; Is this a valid Prophet 5 voice dump?
             jsr Validate        ; ,,
             bne SysexFail       ; ,,
             ldx #SM_RECV        ; Show received success status
@@ -403,7 +405,7 @@ SysexFail:  lda #$80            ; This has failed, so make it an unset program,
 ; COMMANDS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; Previous Library Entry
-PrevLib:    ldy CURLIB_IX
+PrevLib:    ldy CVOICE_IX
             jsr PackLib
             lda #1              ; Default value to substract, one
             sta IX              ; ,,
@@ -411,15 +413,15 @@ PrevLib:    ldy CURLIB_IX
             beq pl_def          ; ,,
             lda #10             ; ,,
             sta IX              ; ,,
-pl_def:     lda CURLIB_IX       ; Subtract the specified number from the
+pl_def:     lda CVOICE_IX       ; Subtract the specified number from the
             sec                 ;   library number
             sbc IX              ;   ,,
-            sta CURLIB_IX       ;   ,,
+            sta CVOICE_IX       ;   ,,
             bcs switchlib       ; If it's below 0, set it back to 0
             lda #0              ; ,,
-            sta CURLIB_IX       ; ,,
+            sta CVOICE_IX       ; ,,
 switchlib:  jsr ClrCursor
-            ldy CURLIB_IX
+            ldy CVOICE_IX
             sty TGTLIB_IX
             jsr SelLib
             jsr PopFields
@@ -444,7 +446,7 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
 pf_r:       jmp MainLoop
 
 ; Next Library Entry
-NextLib:    ldy CURLIB_IX
+NextLib:    ldy CVOICE_IX
             jsr PackLib
             lda #1              ; Default value to add, one
             sta IX              ; ,,
@@ -452,13 +454,13 @@ NextLib:    ldy CURLIB_IX
             beq nl_def          ; ,,
             lda #10             ; ,,
             sta IX              ; ,,
-nl_def:     lda CURLIB_IX       ; Add the specified number to the
+nl_def:     lda CVOICE_IX       ; Add the specified number to the
             clc                 ;   library number
             adc IX              ;   ,,
             cmp #LIB_TOP        ; If it overflows, set back to 80
             bcc nl_set          ; ,,
             lda #LIB_TOP-1      ; ,,
-nl_set:     sta CURLIB_IX       ; Store the new index
+nl_set:     sta CVOICE_IX       ; Store the new index
             jmp switchlib       ; Swith library from PrevLib
                       
 ; Move Cursor to Next Field
@@ -504,7 +506,7 @@ inc_bypass: jsr PrepField       ; Get field value
             cmp TRangeH,y
             bcs id_r            ; Already at maximum, so do nothing
             jsr NRPNpre         ; Pre-change (Undo)
-            inc CURVCE,x
+            inc CVOICE,x
 nrpn_msg:   lda PAGE            ; If < and > are pressed on the
             cmp #4              ;   Library View, do nothing
             beq topspeed        ;   ,,
@@ -545,7 +547,7 @@ dec_bypass: jsr PrepField       ; Get field value
             cmp TRangeL,y
             beq id_r            ; Already at minimum, so do nothing
             jsr NRPNpre         ; Pre-change (Undo)
-            dec CURVCE,x
+            dec CVOICE,x
             jmp nrpn_msg
 
 ; Single-Key Edit
@@ -568,15 +570,15 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             ldx FNRPN,y         ; Anything else will advance to its max
             lda FType,y         ;   and then roll back to 0
             tay                 ;   ,,
-            lda CURVCE,x        ;   ,,
+            lda CVOICE,x        ;   ,,
             cmp TRangeH,y       ;   ,,
             bcc adv_f           ;   ,,
             cpy #F_VALUE        ; If this is a value type, do not roll back      
             beq edna_r          ;   after passing the high range; do nothing
             lda TRangeL,y       ; If above high range, set to low
-            sta CURVCE,x        ;   and save that
+            sta CVOICE,x        ;   and save that
             jmp val_ch          ;   ,,
-adv_f:      inc CURVCE,x        ;   ,,
+adv_f:      inc CVOICE,x        ;   ,,
 val_ch:     jsr NRPNpost        ;   ,,
             ldy FIELD_IX        ;   Draw the new field value
             jsr DrawField       ;   ,,
@@ -586,7 +588,7 @@ sel_prog:   tya                 ; Field index
             adc VIEW_START      ;   plus start-of-view
             sec                 ;   ,,
             sbc TopParamIX+4    ;   minus first page parameter...
-            sta CURLIB_IX       ; ...Equals the new current program index
+            sta CVOICE_IX       ; ...Equals the new current program index
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
             lda #0              ; Drill down to edit page
@@ -607,7 +609,7 @@ getkey:     jsr Keypress        ; Get key code in Y, PETSCII in A
             cmp #"Z"+1          ; ,,
             bcs getkey          ; ,,
             ldy IX              ; Put this character into the NRPN buffer
-            sta CURVCE+65,y     ; ,,
+            sta CVOICE+65,y     ; ,,
             jsr PETtoScr        ; Convert to screen code for display
             ldy IX              ; ,,
             sta (FIELD),y       ; ,,
@@ -622,7 +624,7 @@ backsp:     ldy IX              ; Backspace
             dec IX              ; Backspace by moving index back
             ldy IX              ; ,,
             lda #0              ; And adding a 0 in the NRPN buffer
-            sta CURVCE+65,y     ; ,,
+            sta CVOICE+65,y     ; ,,
             beq pos_cur
 entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
             lda #" "            ; ,,
@@ -630,7 +632,7 @@ entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
             jsr DrawCursor      ; Replace removed field-level cursor
             jmp MainLoop        ; And go back to Main
 find_end:   ldy #0              ; Starting NRPN index of Name
--loop:      lda CURVCE+65,y     ; Find the end of the current name, where the
+-loop:      lda CVOICE+65,y     ; Find the end of the current name, where the
             beq fc_r            ;   cursor should go
             iny                 ;   ,,
             cpy #20             ;   ,,
@@ -640,7 +642,7 @@ fc_r:       sty IX              ;   ,,
 
 ; Generate Program
 ; From two spefcified parent programs in the library
-Generate:   ldy CURLIB_IX       ; First, make sure that the current library
+Generate:   ldy CVOICE_IX       ; First, make sure that the current library
             jsr Validate        ;   entry is either invalid, or lacks a
             bne gen_ok          ;   program number. We don't want to overwrite
             ldy #4              ;   something that's already in the library.
@@ -683,7 +685,7 @@ gen_ok:     lda $9114           ; Seed the random number shift register
             lda SEED2,y         ;   ,,  otherwise use seed 2)
             tax                 ;   ,,
 s1:         txa                 ;   ,,
-            sta CURVCE,y        ;   ,,
+            sta CVOICE,y        ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
             lda MUTATE          ; Mutate generated program if enabled
@@ -698,7 +700,7 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
 -loop:      jsr Rand127         ; Get a value between 0-120
             cmp #121            ; ,,
             bcs loop            ; ,,
-            sta CURVCE,x        ; Store it in the current program
+            sta CVOICE,x        ; Store it in the current program
             dec IX              ; Decrement the mutation count
             bne mutate          ; Go back for more
 no_mutate:  jsr SetCurPtr       ; Pack program into library
@@ -710,7 +712,7 @@ no_mutate:  jsr SetCurPtr       ; Pack program into library
              
 ; Set Program Number
 ; for current voice                   
-SetPrg:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
+SetPrg:     ldy CVOICE_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
             lda PTR             ; Unpack buffer prior to program # change
             ldy PTR+1           ; ,,
@@ -752,7 +754,7 @@ do_set:     ldy #4              ; Get the user input from PTRD and update the
 setp_r:     jmp MainSwitch
             
 ; Change Group Numbers    
-SetGrp:     ldy CURLIB_IX       ; Get program location to TEMPNAME 
+SetGrp:     ldy CVOICE_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
             lda TEMPNAME        ; Is the group set?
             cmp #"-"            ; ,,
@@ -825,7 +827,7 @@ setgrp_r:   jmp MainSwitch
             
 ; System Exclusive Voice Dump
 ; of program, bank, or group
-GoSend:     ldy CURLIB_IX       ; If this is not a valid program, cannot
+GoSend:     ldy CVOICE_IX       ; If this is not a valid program, cannot
             jsr Validate        ;   do dump
             bne dump_r          ;   ,,
             jsr Popup           ; Put the dump selection menu 
@@ -1106,7 +1108,7 @@ start_save: lda #0              ; Turn off KERNAL messages
             jsr Status          ; ,,
             bit COMMODORE       ; If this is a single-voice save, set the
             bpl save_lib        ;   disk library index to the current index
-            ldy CURLIB_IX       ;   ,,
+            ldy CVOICE_IX       ;   ,,
             .byte $3c           ; Skip word (SKW) 
 save_lib:   ldy #0              ; Initialize disk save index
 -next_rec:  sty DISKLIB_IX      ; ,,
@@ -1176,7 +1178,7 @@ start_load: lda #0              ; Turn off KERNAL messages
             ldy #0              ; Initialize library pointer
             bit COMMODORE       ; ,, Was Commodore held down?
             bpl load_cur        ; ,,  If so, start at current voice
-            ldy CURLIB_IX       ; ,,  ,,
+            ldy CVOICE_IX       ; ,,  ,,
 load_cur:   sty DISKLIB_IX      ; ,,
 -next_rec:  ldy DISKLIB_IX      ; Get next library pointer
             jsr SetLibPtr       ; Get next library pointer
@@ -1261,28 +1263,48 @@ req_r2:     jmp MainSwitch
          
 ; Undo
 ; If undo level > 0, then get last NRPN and set it to its last value           
-Undo:       lda SHIFT           ; Commodore must be held for Undo
-            cmp #$02            ; ,,
-            bne undo_r          ; ,,
+Undo:       bit COMMODORE       ; Undo works only with COMMODORE down
+            bpl undo_r          ; ,,
             ldy UNDO_LEV        ; At least one level must be available
             beq undo_r          ; ,,
-            lda UNDO_NRPN,y     ; Get the NRPN number for the level
-            pha                 ; ,, (store for DrawByNRPN, below)
+            lda UNDO_VCE,y      ; Get the voice number for the level
+            cmp CVOICE_IX       ;   Is it the current voice?
+            beq undo_this       ;   If so, just perform the undo
+            pha                 ; Changing voice, so stash new voice number
+            lda UNDO_FIX,y      ; Convert field number to page
+            tay                 ; ,,
+            lda FPage,y         ; ,,
+            sta PAGE            ; ,, and set the new page
+            ldy CVOICE_IX       ; Pack the previous voice
+            jsr PackLib         ; ,,
+            pla                 ; Select the new voice
+            tay                 ; ,,
+            sty CVOICE_IX       ; ,, Set current voice
+            jsr SelLib          ; ,,
+            jmp MainSwitch      ; ,,
+undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
+            pha                 ; ,, (store the field index)
             tax                 ; ,, (store in X)
+            lda FNRPN,x         ; Get the NRPN for this field
+            tax                 ;   into X
             lda UNDO_VAL,y      ; Get the value for the level
-            sta CURVCE,x        ; Restore the program value
+            sta CVOICE,x        ; Restore the program value
             dec UNDO_LEV        ; Go to the next level
-            lda #$ff            ; Reset the last NRPN number
-            sta LAST_NRPN       ; ,,
+            lda #$ff            ; Reset the last field index number
+            sta LAST_FIX        ; ,,
             jsr NRPNpost        ; Transmit NRPN CCs, if enabled (passing X)
             ldx #SM_UNDONE      ; Show undo message
             jsr Status          ; ,,
-            pla
-            jsr DrawByNRPN      ; ,,
-            ldy UNDO_LEV
-            jsr TwoDigNum
-            stx STATUSDISP+18
-            sta STATUSDISP+19
+            pla                 ; Draw the field. Get the field index back.
+            tay                 ; ,,
+            ldx FPage,y         ; Get the page number for the undone field
+            sta LAST_LIB_IX,x   ; ,, (set the last index to move the cursor)
+            stx PAGE            ; ,,
+            jsr SwitchPage      ; ,,
+            ldy UNDO_LEV        ; Show the level number
+            jsr TwoDigNum       ; ,,
+            stx STATUSDISP+18   ; ,,
+            sta STATUSDISP+19   ; ,,
 undo_r:     jmp MainLoop          
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1428,7 +1450,7 @@ PrepField:  ldy FIELD_IX
             cmp #F_NAME
             beq no_decinc
             tay
-            lda CURVCE,x
+            lda CVOICE,x
             sec
             rts
 no_decinc:  clc
@@ -1485,7 +1507,7 @@ dc_col:     lda FType,y         ; Color the field the selected color only
             ; Fall through to ShowPrgNum
 
 ; Show Current Voice and Program Numbers
-ShowPrgNum: ldy CURLIB_IX       ; Get current program number
+ShowPrgNum: ldy CVOICE_IX       ; Get current program number
             jsr PrgLoc          ; ,,
             ldy #2              ; Show program number or unset (---)
 -loop:      lda TEMPNAME,y      ; ,,
@@ -1500,7 +1522,7 @@ ShowPrgNum: ldy CURLIB_IX       ; Get current program number
             bcc vce_num         ;   ,,
             ldx #$86            ; A reverse "F"
 vce_num:    stx STATUSDISP+5    ; ,,
-            ldy CURLIB_IX       ; Get current library entry 
+            ldy CVOICE_IX       ; Get current library entry 
             iny                 ; Library entries are 1-indexed for display
             jsr TwoDigNum       ; Get the number
             dey                 ; Return library to 0-indexed
@@ -1534,20 +1556,6 @@ cc_col:     jsr FieldColor
             ldx #0
             sta (FIELD,x)
 cc_r:       rts
-   
-; Draw Field by NRPN
-; With NRPN supplied in A, if it's on the same edit page        
-DrawByNRPN: ldy #0
--loop:      cmp FNRPN,y
-            beq nrpn_found
-            iny
-            cpy #(LFIELD-FPage)
-            bne loop
-d_nrpn_r:   rts
-nrpn_found: lda PAGE
-            cmp FPage,y
-            bne d_nrpn_r
-            ; Fall through to DrawField
             
 ; Draw Field
 ; at index Y
@@ -1560,7 +1568,7 @@ DrawField:  jsr FieldLoc        ; Set the field's physical screen location
             pha                 ;   ,,
             lda FNRPN,y         ; Get this field's NRPN, which is also the
             tay                 ;   index within the program data
-            lda CURVCE,y        ;   and put the current value in A
+            lda CVOICE,y        ;   and put the current value in A
 draw_r:     rts                 ; Pull the draw address off the stack, dispatch
          
 ; Set Field Location   
@@ -1867,7 +1875,7 @@ prstr_r:    rts
 ; Show voice number for Commodore+S and Commodore+L
 FileVce:    bit COMMODORE       ; If this is a single-voice save,
             bpl fvce_r          ;   show the voice number in the prompt
-            ldy CURLIB_IX       ;   ,,
+            ldy CVOICE_IX       ;   ,,
             iny                 ;   ,, increment for 1-index
             jsr TwoDigNum       ;   ,,
             ora #$80            ;   ,, put ones place in reverse
@@ -1967,12 +1975,12 @@ BufferSend: lda #<EditBuffer
             sta P_RESULT
             lda PTR+1
             sta P_RESULT+1
-            lda #<CURVCE
+            lda #<CVOICE
             sta P_START
             clc
             adc #$88
             sta P_END
-            lda #>CURVCE
+            lda #>CVOICE
             sta P_START+1
             sta P_END+1
             jsr Pack
@@ -1989,9 +1997,9 @@ bsend_r:    rts
 ; Unpack to Buffer
 ; A = low byte / Y = high byte of $9f-byte sysex message ($f0 - $f7)
 ; For the UnpSeed endpoint, prepare by setting P_RESULT
-UnpBuff:    ldx #<CURVCE        ; Set program buffer as result
+UnpBuff:    ldx #<CVOICE        ; Set program buffer as result
             stx P_RESULT
-            ldx #>CURVCE
+            ldx #>CVOICE
             stx P_RESULT+1
 UnpSeed:    sta P_START
             sta P_END
@@ -2033,12 +2041,12 @@ hdr_ok:     lda PTR
             sta P_RESULT
             lda PTR+1
             sta P_RESULT+1
-            lda #<CURVCE
+            lda #<CVOICE
             sta P_START
             clc
             adc #$80
             sta P_END
-            lda #>CURVCE
+            lda #>CVOICE
             sta P_START+1
             sta P_END+1
             jsr Pack
@@ -2092,15 +2100,7 @@ send_r:     clc
 SelLib:     jsr Validate
             beq lib_good
             jsr NewLib
-lib_good:   ldy #UNDOS          ; When a new program is selected, clear
-            lda #0              ;   the Undo buffer
-            sta UNDO_LEV,y      ;   ,, and reset the undo level
--loop:      sta UNDO_NRPN,y     ;   ,,
-            dey                 ;   ,,
-            bpl loop            ;   ,,
-            lda #$ff            ; Set last NRPN to unset
-            sta LAST_NRPN       ; ,,
-            lda PTR             ; Unpack the library into the edit
+lib_good:   lda PTR             ; Unpack the library into the edit
             ldy PTR+1           ;   buffer
             jsr UnpBuff         ;   ,,
             ; Fall through to PrgChgMsg
@@ -2128,7 +2128,7 @@ pch_r:      rts
 
 ; Set Library Pointer
 ; to entry index in Y
-SetCurPtr:  ldy CURLIB_IX       ; For this endpoint, use the current index
+SetCurPtr:  ldy CVOICE_IX       ; For this endpoint, use the current index
 SetLibPtr:  lda LibraryL,y      ; In case of soft reset, advance library
             sta PTR             ;   pointer to the last library entry
             lda LibraryH,y      ;   ,,
@@ -2216,31 +2216,45 @@ Rand127:    lda #%00000010      ; 7-bit
 
 ; Pre NRPN Change
 ; Manage undo levels    
-; NRPN index is in X
-NRPNpre:    cpx LAST_NRPN       ; If the last field has changed again,
-            beq pre_r           ;   do nothing
-            cpx #$90            ; If this is one of the settings parameters
+NRPNpre:    txa 
+            pha
+            ldy CVOICE_IX       ; Y = current voice index
+            ldx FIELD_IX        ; X = current field index
+            cpx LAST_FIX        ; If the last field has changed again,
+            bne diff_f          ;   and on the same voice number,
+            cpy LAST_VCE        ;   do nothing
+            beq pre_r
+diff_f:     cpx #$90            ; If this is one of the settings parameters
             bcs pre_r           ;   for Ed, do not create an Undo level
-            stx LAST_NRPN       ; Store the last NRPN
+            stx LAST_FIX        ; Store the last field index
+            sty LAST_VCE        ; Store the last voice
             ldy UNDO_LEV        ; If there are undo levels remaining,
             cpy #UNDOS-1        ; ,,
             bcc save_lev        ; ,, save a new level
             ldy #1              ; If the level is at max, then move
--loop:      lda UNDO_NRPN,y     ;   the current levels down one,
-            sta UNDO_NRPN-1,y   ;   resulting in the loss of the
+-loop:      lda UNDO_FIX,y      ;   the current levels down one,
+            sta UNDO_FIX-1,y    ;   resulting in the loss of the
             lda UNDO_VAL,y      ;   oldest undo level
             sta UNDO_VAL-1,y    ;   ,,
+            lda UNDO_VCE,y      ;   ,,
+            sta UNDO_VCE-1,y    ;   ,,
             iny
             cpy #UNDOS          ;   ,,
             bne loop            ;   ,,
             ldy #UNDOS-2        ; Wants to be UNDOS-1, but there's an INY coming
 save_lev:   iny                 ; Move level pointer
-            sty UNDO_LEV        ; ,,              
-            lda CURVCE,x        ; Get pre-change value
-            sta UNDO_VAL,y      ; Store it in UNDO value list
+            sty UNDO_LEV        ; ,,   
             txa                 ; ,,
-            sta UNDO_NRPN,y     ; Store NRPN number in value list
-pre_r:      rts            
+            sta UNDO_FIX,y      ; Store field number in value list
+            lda CVOICE_IX       ; Store voice number in voice list
+            sta UNDO_VCE,y      ; ,,
+            lda FNRPN,x         ; Convert X from field index to NRPN
+            tax                 ; ,,           
+            lda CVOICE,x        ; Get pre-change value
+            sta UNDO_VAL,y      ; Store it in UNDO value list
+pre_r:      pla 
+            tax
+            rts            
                         
 ; Post NRPN Change
 ; Send NRPN, if enabled
@@ -2268,7 +2282,7 @@ NRPNpost:   lda NRPN_TX         ; Skip the whole thing is NRPN is disabled
             lda #%00100110      ; NRPN parameter value LSB CC
             jsr MIDIOUT         ; ,,
             ldx IX              ; Get the NRPN number
-            lda CURVCE,x        ; Get the value
+            lda CVOICE,x        ; Get the value
             and #$7f            ; Constrain for CC
             jsr MIDIOUT         ; ,,
 post_r:     rts
@@ -2454,7 +2468,7 @@ sydone:     ldy #0              ; Set listen flag off
             iny                 ; Set ready flag on
             sty READY           ; ,,
             lda TGTLIB_IX       ; Copy library index to current library index 
-            sta CURLIB_IX       ; ,,
+            sta CVOICE_IX       ; ,,
             cmp #LIB_TOP-1      ; If not at the top entry yet, advance target
             beq r_isr           ;   library index
             inc TGTLIB_IX       ;   ,,
@@ -2509,7 +2523,7 @@ Name:       ldy #20
             dey 
             bne loop
             lda #65             ; Offset for name location
-            ldy #>CURVCE        ; Current program location
+            ldy #>CVOICE        ; Current program location
             jmp WriteText
                  
 ; Draw Enum Field
@@ -2520,7 +2534,7 @@ Enum:       sty ANYWHERE        ; Save the NRPN for comparison
             cmp ANYWHERE        ; ,,
             bne next_enum
             lda EnumInt,x       ; Does the entry match the NRPN value?
-            cmp CURVCE,y        ; ,,
+            cmp CVOICE,y        ; ,,
             beq found_enum      ; If so, write its text
 next_enum:  dex
             bpl loop
@@ -2558,7 +2572,7 @@ one_dig:    pla
 Freq:       ldx #48             ; Default upper range for C0-C4
             cpy #1              ; Is this the Oscillator B NRPN?
             bne c0_4            ; ,, If A, use C0-C4 range
-            ldy CURVCE+12       ; Is the "Keyboard" switch ON?
+            ldy CVOICE+12       ; Is the "Keyboard" switch ON?
             bne c0_4            ;    If so, it's a C0-C4 range
             clc                 ; Add one to the field, for display only...
             adc #1              ;   The range is C#0 to C9, with 0 being C#0 and
@@ -2658,7 +2672,7 @@ prli_r:     rts
 
 ; Show Hex
 ; For selected program voice sysex
-ShowHex:    ldy CURLIB_IX       ; Pack voice to sysex are before showing
+ShowHex:    ldy CVOICE_IX       ; Pack voice to sysex are before showing
             jsr PackLib         ; ,,
             jsr SetCurPtr       ; ,,
             ldy #0
@@ -2756,7 +2770,7 @@ q_disp:     ora #$30            ; Convert to screen code and write to the field
             asl                 ;   stored value. This shifts away the $30
             asl                 ;   of the screen code 
             asl                 ;   ,,
-            sta CURVCE,y        ; Store the value
+            sta CVOICE,y        ; Store the value
             rts
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2955,7 +2969,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98
             .byte 90,101,96,95 ; P10 parameters
 
-            ; The following are not really NRPN numbers, but use the CURVCE
+            ; The following are not really NRPN numbers, but use the CVOICE
             ; storage for menu settings
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; Library View
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; ,,
