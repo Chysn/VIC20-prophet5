@@ -1082,16 +1082,7 @@ GoSave:     jsr CLALL
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            bit COMMODORE       ; If this is a single-voice save,
-            bpl prompt          ;   show the voice number in the prompt
-            ldy CURLIB_IX       ;   ,,
-            iny                 ;   ,, increment for 1-index
-            jsr TwoDigNum       ;   ,,
-            ora #$80            ;   ,, put ones place in reverse
-            sta SCREEN+214      ;   ,, in the popup window
-            txa                 ;   ,, same with tens place
-            ora #$80            ;   ,,
-            sta SCREEN+213      ;   ,, 
+            jsr FileVce
 prompt:     jsr SetName         ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
@@ -1156,7 +1147,8 @@ GoLoad:     jsr CLALL
             jsr Popup
             lda #<LoadLabel
             ldy #>LoadLabel
-            jsr PrintStr    
+            jsr PrintStr
+            jsr FileVce  
             jsr SetName         ; Get name from user
             bcc start_load
             jmp disk_canc
@@ -1865,6 +1857,20 @@ PrintStr:   sta FIELD
             jsr IncFIELD
             jmp loop
 prstr_r:    rts
+
+; File Voice Number
+; Show voice number for Commodore+S and Commodore+L
+FileVce:    bit COMMODORE       ; If this is a single-voice save,
+            bpl fvce_r          ;   show the voice number in the prompt
+            ldy CURLIB_IX       ;   ,,
+            iny                 ;   ,, increment for 1-index
+            jsr TwoDigNum       ;   ,,
+            ora #$80            ;   ,, put ones place in reverse
+            sta SCREEN+214      ;   ,, in the popup window
+            txa                 ;   ,, same with tens place
+            ora #$80            ;   ,,
+            sta SCREEN+213      ;   ,, 
+fvce_r:     rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; I/O AND DATA SUBROUTINES
