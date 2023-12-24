@@ -1170,7 +1170,7 @@ start_load: lda #0              ; Turn off KERNAL messages
             bcs disk_error      ; ,,
             ldx #2              ; CHKIN
             jsr CHKIN           ; ,,
-disk_err2:  bcs disk_error      ; ,,
+            bcs disk_error      ; ,,
             ldx #SM_LOADING
             jsr Status       
             ldy #0              ; Initialize library pointer
@@ -1210,8 +1210,9 @@ eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual
             cmp DISKLIB_IX      ;   then act as though we're EOF 
             bne next_rec        ;   otherwise go back for another record
 eof:        and #$40            ; If this is a read error, show error message
-            beq disk_err2       ; ,,
-            lda #2
+            bne load_good
+            jmp disk_error
+load_good:  lda #2
             jsr CLOSE
             jsr CLRCHN
             jsr SetCurPtr       ; Unpack current program into the edit buffer
@@ -1219,7 +1220,7 @@ eof:        and #$40            ; If this is a read error, show error message
             ldy PTR+1           ;   ,,
             jsr UnpBuff         ;   ,,
             ; Fall through to disk ok
-            f
+            
             ; Shared exit points for both save and load
 disk_ok:    ldx #SM_OK          ; Show success message
             jsr Status          ; ,,
