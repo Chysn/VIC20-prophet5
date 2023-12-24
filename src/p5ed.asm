@@ -3068,7 +3068,7 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," V    ",30," SEND ",5,RVON,"C=",RVOF,30,"FACTORY",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
             .asc 5," G    ",30," GENERATE VOICE",CR
-            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,30,"CURRENT",CR
+            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,30,"@ CURR",CR
             .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,30,"VOICE",CR
             .asc 5," X    ",30," HEX VIEW",CR
             .asc 5," RUN  ",30," SEQ PLAY/STOP",CR
