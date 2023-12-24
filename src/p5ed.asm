@@ -1510,9 +1510,9 @@ ShowPrgNum: ldy CURLIB_IX       ; Get current program number
             ldy #4              ; Is the program a factory program
             lda (PTR),y         ;   (group number > 5)?
             bmi vce_num         ;   (and also, bit 7 is clear)
-            cmp #06             ;   ,,
+            cmp #05             ;   ,,
             bcc vce_num         ;   ,,
-            ldx #$87            ; A reverse "F"
+            ldx #$86            ; A reverse "F"
 vce_num:    stx STATUSDISP+5    ; ,,
             ldy CURLIB_IX       ; Get current library entry 
             iny                 ; Library entries are 1-indexed for display
@@ -1956,7 +1956,7 @@ DumpVce:    ldy #0              ; Set the output index
             bne dv_send         ; ,, If not, send
             bit COMMODORE       ; Is the factory flag set?
             bpl dv_send         ; ,, If not, send
-            cmp #6              ; Is this already in a Factory group?
+            cmp #5              ; Is this already in a Factory group?
             bcs dv_send         ; ,, If so, send
             clc                 ; If all the aforementioned conditions pass,
             adc #5              ;   add 5 to the group number
