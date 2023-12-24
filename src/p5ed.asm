@@ -1220,6 +1220,8 @@ eof:        and #$40            ; If this is a read error, show error message
 load_good:  lda #2
             jsr CLOSE
             jsr CLRCHN
+            lda #0              ; Reset undo after load
+            sta UNDO_LEV        ; ,,
             jsr SetCurPtr       ; Unpack current program into the edit buffer
             lda PTR             ;   after load, just in case it's changed
             ldy PTR+1           ;   ,,
@@ -1281,7 +1283,7 @@ Undo:       bit COMMODORE       ; Undo works only with COMMODORE down
             tay                 ; ,,
             sty CVOICE_IX       ; ,, Set current voice
             jsr SelLib          ; ,,
-            jmp MainSwitch      ; ,,
+            ldy UNDO_LEV        ; ,,
 undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
             pha                 ; ,, (store the field index)
             tax                 ; ,, (store in X)
@@ -1305,7 +1307,8 @@ undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
             jsr TwoDigNum       ; ,,
             stx STATUSDISP+18   ; ,,
             sta STATUSDISP+19   ; ,,
-undo_r:     jmp MainLoop          
+            jsr SwitchPage                
+undo_r:     jmp MainLoop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
