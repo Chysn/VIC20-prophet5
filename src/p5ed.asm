@@ -796,6 +796,7 @@ grp_bksp:   lda IX              ; If already at the start, cannot backspace
             jmp grp_cur         ; ,,
 grp_done:   lda IX              ; If no group was entered, go back for more
             beq grp_key         ; ,,
+            lda WINDOW_ED       ; Get user input
             eor #$30            ; Remove the screen code and leave the number
             sec                 ; Zero-index the group number 
             sbc #1              ; ,,
