@@ -403,10 +403,7 @@ SysexFail:  lda #$80            ; This has failed, so make it an unset program,
 ; COMMANDS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; Previous Library Entry
-PrevLib:    lda PAGE            ; If on the Library View, treat this keypress
-            cmp #4              ;   as a Previous Field instead.
-            beq PrevField       ;   ,,
-            ldy CURLIB_IX
+PrevLib:    ldy CURLIB_IX
             jsr PackLib
             lda #1              ; Default value to substract, one
             sta IX              ; ,,
@@ -440,7 +437,6 @@ PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
             jsr ClrCursor
             dey
 ch_f:       sty FIELD_IX        ; Endpoint for changing the field
-            jsr LibViewF        ; Handle library change if in Library View
             jsr DrawCursor
             ldy PAGE            ; Keep track of the index for the current
             lda FIELD_IX        ;   page
@@ -448,10 +444,7 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
 pf_r:       jmp MainLoop
 
 ; Next Library Entry
-NextLib:    lda PAGE            ; If on the Library View, treat this keypress
-            cmp #4              ;   as a Next Field instead.
-            beq NextField       ;   ,,
-            ldy CURLIB_IX
+NextLib:    ldy CURLIB_IX
             jsr PackLib
             lda #1              ; Default value to add, one
             sta IX              ; ,,
@@ -500,12 +493,6 @@ LibView:    tay                 ; Get library division for this key
             sta VIEW_START      ; ,,
             lda #4              ; Set page number
             sta PAGE            ; ,,
-            ldy VIEW_START      ; Select the view start entry on view load
-            sty CURLIB_IX       ; ,,
-            sty TGTLIB_IX       ; ,, set target library
-            jsr SelLib          ; ,,
-            ldy CURLIB_IX       ; Show program number
-            jsr PopFields       ; ,,            
             jmp MainSwitch
 
 ; Increment Field by 1
@@ -1193,8 +1180,11 @@ start_load: lda #0              ; Turn off KERNAL messages
 disk_err2:  bcs disk_error      ; ,,
             ldx #SM_LOADING
             jsr Status       
-            ldy CURLIB_IX       ; Initialize library pointer
-            sty DISKLIB_IX      ; ,,
+            ldy #0              ; Initialize library pointer
+            bit COMMODORE       ; ,, Was Commodore held down?
+            bpl load_cur        ; ,,  If so, start at current voice
+            ldy CURLIB_IX       ; ,,  ,,
+load_cur:   sty DISKLIB_IX      ; ,,
 -next_rec:  ldy DISKLIB_IX      ; Get next library pointer
             jsr SetLibPtr       ; Get next library pointer
             ldy #0              ; Index within current message
@@ -1828,25 +1818,6 @@ unshift:    lda #$5e            ; ,,
             rts
 stop_seq:   jsr StopSeq
             jmp Keypress
-         
-; Library View Field Change
-; When a field is changed in Library View, it changes the current program            
-LibViewF:   lda PAGE            ; Are we on the Library View?
-            cmp #4              ; ,,
-            bne lvf_r           ; ,, return if not
-            lda FIELD_IX        ; Field index
-            sta LAST_LIB_IX+4   ;   ,, (Preserve last library index)
-            clc                 ;   ,,
-            adc VIEW_START      ;   plus start-of-view
-            sec                 ;   ,,
-            sbc TopParamIX+4    ;   minus first page parameter...
-            sta CURLIB_IX       ; ...Equals the new current program index
-            sta TGTLIB_IX       ; ...and the target program index
-            tay                 ; Select this library entry
-            jsr SelLib          ; ,,
-            ldy CURLIB_IX       ; Show program number
-            jsr ShowPrgNum      ; ,,
-lvf_r:      rts
 
 ; Put Hex on Screen
 ; at FIELD pointer
@@ -3090,7 +3061,7 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," V    ",30," SEND ",5,RVON,"C=",RVOF,30,"FACTORY",CR
             .asc 5," Q    ",30," REQUEST DATA",CR
             .asc 5," G    ",30," GENERATE VOICE",CR
-            .asc 5," L    ",30," LOAD ",CR
+            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,30,"CURRENT",CR
             .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,30,"VOICE",CR
             .asc 5," X    ",30," HEX VIEW",CR
             .asc 5," RUN  ",30," SEQ PLAY/STOP",CR
