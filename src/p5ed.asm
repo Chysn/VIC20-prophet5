@@ -748,8 +748,10 @@ set_prg:    jsr Popup
 is_unset:   ldy #0              ; Cursor position in edit field        
             jsr SetPrgNum       ; Get program number from user
             bcc do_set          ;   If ok, do the set
+            cpy #CANCEL         ;   If canceled, do nothing
+            beq setp_r          ;   ,,
             lda IX              ;   If at beginning, mark as unset
-            bne setp_r          ;   If canceled, return
+            bne setp_r          ;   ,,
             lda #$80            ; Mark the program as unset if the input was
             sta PTRD            ;   totally empty
             lda #$00            ;   ,,
@@ -807,9 +809,6 @@ grp_bksp:   lda IX              ; If already at the start, cannot backspace
             jmp grp_cur         ; ,,
 grp_done:   lda IX              ; If no group was entered, go back for more
             beq grp_key         ; ,,
-            lda WINDOW_ED       ; If there's no change to the group, go  
-            cmp TEMPNAME        ;   back for more
-            beq grp_key         ;   ,,
             eor #$30            ; Remove the screen code and leave the number
             sec                 ; Zero-index the group number 
             sbc #1              ; ,,
