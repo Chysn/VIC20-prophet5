@@ -1205,6 +1205,9 @@ eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual
             lda DISKLIB_IX      ; Show progress bar
             asl                 ; ,, Multiple progress by 2
             jsr ProgPopup       ; ,,
+            lda KEY             ; If CANCEL key is held, end load
+            cmp #CANCEL         ; ,,
+            beq load_good       ; ,,
             inc DISKLIB_IX      ; Increment the disk library index.
             lda #LIB_TOP        ;   If it's reached the library top,
             cmp DISKLIB_IX      ;   then act as though we're EOF 
