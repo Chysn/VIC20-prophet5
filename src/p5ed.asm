@@ -1506,6 +1506,14 @@ ShowPrgNum: ldy CURLIB_IX       ; Get current program number
             sta STATUSDISP+2,y  ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
+            ldx #" "            ; Default suffix
+            ldy #4              ; Is the program a factory program
+            lda (PTR),y         ;   (group number > 5)?
+            bmi vce_num         ;   (and also, bit 7 is clear)
+            cmp #06             ;   ,,
+            bcc vce_num         ;   ,,
+            ldx #$87            ; A reverse "F"
+vce_num:    stx STATUSDISP+5    ; ,,
             ldy CURLIB_IX       ; Get current library entry 
             iny                 ; Library entries are 1-indexed for display
             jsr TwoDigNum       ; Get the number
