@@ -869,10 +869,11 @@ dump_r:     ldx #SM_BLANK       ; No dump done, clear status
             jmp MainSwitch
 
 ; Erase the current program      
-Erase:      jsr Popup
+GoErase:    jsr Popup
             lda #<EraseConf
             ldy #>EraseConf
             jsr PrintStr
+            jsr srcvce_un
             jsr Keypress
             cmp #"Y"
             bne erase_r
@@ -895,8 +896,9 @@ GoCopy:     jsr Popup
             bit COMMODORE
             bpl copy_lab
             lda #<SwapLabel
-            ldy #>SwapLabel            
+            ldy #>SwapLabel   
 copy_lab:   jsr PrintStr
+            jsr srcvce_un       ; Show the source voice         
             ldy #0              ; Set up editor for library number entry
             sty IX              ; ,, Set current cursor position
 cpos_cur:   lda #TXTCURSOR      ; ,, Add cursor at beginning
@@ -1085,7 +1087,7 @@ GoSave:     jsr CLALL
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            jsr FileVce
+            jsr SourceVce
 prompt:     jsr SetName         ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
@@ -1151,7 +1153,7 @@ GoLoad:     jsr CLALL
             lda #<LoadLabel
             ldy #>LoadLabel
             jsr PrintStr
-            jsr FileVce  
+            jsr SourceVce  
             jsr SetName         ; Get name from user
             bcc start_load
             jmp disk_canc
@@ -1307,7 +1309,6 @@ undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
             jsr TwoDigNum       ; ,,
             stx STATUSDISP+18   ; ,,
             sta STATUSDISP+19   ; ,,
-            jsr SwitchPage                
 undo_r:     jmp MainLoop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1495,9 +1496,9 @@ DrawCursor: ldy FIELD_IX
             lda FRow,y
             jsr FieldRow
             ldx #0
-            lda (FIELD,x)       ; If there's anything other than a space
-            cmp #" "            ;   here, then do not draw the cursor
-            bne dc_col          ;   ,,
+;            lda (FIELD,x)       ; If there's anything other than a space
+;            cmp #" "            ;   here, then do not draw the cursor
+;            bne dc_col          ;   ,,
             lda #CURSOR
             sta (FIELD,x)       ;   ,,
 dc_col:     lda FType,y         ; Color the field the selected color only
@@ -1874,11 +1875,12 @@ PrintStr:   sta FIELD
             jmp loop
 prstr_r:    rts
 
-; File Voice Number
-; Show voice number for Commodore+S and Commodore+L
-FileVce:    bit COMMODORE       ; If this is a single-voice save,
+; Source Voice Number
+; Show voice number for Commodore+S, Commodore+L, C, and Commodore+C
+; srcvce_un is the unconditional entry point
+SourceVce:  bit COMMODORE       ; If Commodore was pressed,
             bpl fvce_r          ;   show the voice number in the prompt
-            ldy CVOICE_IX       ;   ,,
+srcvce_un:  ldy CVOICE_IX       ;   ,,
             iny                 ;   ,, increment for 1-index
             jsr TwoDigNum       ;   ,,
             ora #$80            ;   ,, put ones place in reverse
@@ -2834,13 +2836,13 @@ CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<GoSend-1
-            .byte <Erase-1,<GoCopy-1,<Sequencer-1,<AddRest-1,<DelNote-1
+            .byte <GoErase-1,<GoCopy-1,<Sequencer-1,<AddRest-1,<DelNote-1
             .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>GoSend-1
-            .byte >Erase-1,>GoCopy-1,>Sequencer-1,>AddRest+1,>DelNote-1
+            .byte >GoErase-1,>GoCopy-1,>Sequencer-1,>AddRest+1,>DelNote-1
             .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1
 
 ; Field type subroutine addresses
@@ -2903,14 +2905,15 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     32,     48,     65,    81,       82,     91
+TopParamIX: .byte 0,      17,     32,     48,     61,    77,       78,     87
 
 ; Field data
 ; Field page number (0-3)
 FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3
+            .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
+            ;.byte 3,3,3,3 ; Prophet-10
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
             .byte 5
             .byte 6,6,6,6,6,6,6,6,6
@@ -2921,7 +2924,8 @@ LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,6,7,8,9,10,13,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
-            .byte 0,1,2,3,6,7,8,9,10,11,12,13,14,15,16,17,18
+            .byte 1,2,3,4,7,8,9,10,11,12,13,14,15
+            ;.byte 15,16,17,18 ; Prophet-10
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
             .byte 5,6,7,8,11,12,15,16,17
@@ -2931,7 +2935,8 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
 FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
-            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14
+            .byte 14,14,14,14,14,14,14,14,14,14,14,14,14
+            ;.byte 14,14,14,14 ; Prophet-10
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 1
             .byte 14,14,14,14,14,14,14,14,14
@@ -2953,7 +2958,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
             .byte F_WHEEL,F_SWITCH,F_SWITCH,F_VALUE
             .byte F_SWITCH,F_SWITCH,F_VALUE
-            .byte F_BTMODE,F_SWITCH,F_VALUE,F_FREQ ; P10 parameters
+;            .byte F_BTMODE,F_SWITCH,F_VALUE,F_FREQ ; P10 parameters
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
@@ -2970,7 +2975,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50,51
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
             .byte 52,87,53,54,13,37,86,41,42,97,38,39,98
-            .byte 90,101,96,95 ; P10 parameters
+            ;.byte 90,101,96,95 ; P10 parameters
 
             ; The following are not really NRPN numbers, but use the CVOICE
             ; storage for menu settings
@@ -3039,6 +3044,7 @@ Edit2:      .asc 30,CR,"POLY-MOD",CR
             .asc 00
                         
 Edit3:      .asc 30,CR,"UNISON",CR
+            .asc RT,"ON",CR
             .asc RT,"RETRIGGER",CR
             .asc RT,"VOICE COUNT",CR
             .asc RT,"DETUNE",CR
@@ -3052,10 +3058,10 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"AFT  >FILTER",CR
             .asc RT,TL,TL,TL,"  >LFO",CR
             .asc RT,"     AMT"
-            .asc CR,RT,"P10  MODE",CR
-            .asc RT,TL,TL,TL,"  LAYER B",CR
-            .asc RT,"     VOL B",CR
-            .asc RT,"     SPLIT"
+            ;.asc CR,RT,"P10  MODE",CR
+            ;.asc RT,TL,TL,TL,"  LAYER B",CR
+            ;.asc RT,"     VOL B",CR
+            ;.asc RT,"     SPLIT"
             .asc 00 
             
 Setup:      .asc 30,CR,"   ED FOR PROPHET-5",CR
@@ -3136,13 +3142,13 @@ SendMenu:   .asc 5,"SEND VOICE",CR
 SendMenu2:  .asc 5,"SEND VOICE",CR,CR
             .asc RT,RT,RT,RT,RT,RVON,"E",RVOF,"DIT BUFF"
             .asc 30,0       
-EraseConf:  .asc 5,"ERASE VOICE",CR,CR
+EraseConf:  .asc 5,"ERASE",CR,CR
             .asc RT,RT,RT,RT,RT,"SURE? (Y/N)",CR
             .asc 30,0
-CopyLabel:  .asc 5,"COPY TO",CR
-            .asc RT,RT,RT,RT,RT,"VOICE",30,0
-SwapLabel:  .asc 5,"SWAP WITH",CR
-            .asc RT,RT,RT,RT,RT,"VOICE",30,0
+CopyLabel:  .asc 5,"COPY",CR
+            .asc RT,RT,RT,RT,RT,"TO VOICE",30,0
+SwapLabel:  .asc 5,"SWAP",CR
+            .asc RT,RT,RT,RT,RT,"WITH VOICE",30,0
 FactoryLab: .asc 6,1,3,20,15,18,25,0 ; FACTORY as screen codes
                          
 ; Library Sysex Pointers
