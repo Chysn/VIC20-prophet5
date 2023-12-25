@@ -1303,8 +1303,12 @@ undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
             tay                 ; ,,
             ldx FPage,y         ; Get the page number for the undone field
             sta LAST_LIB_IX,x   ; ,, (set the last index to move the cursor)
+            cpx PAGE            ; If it's the same page, just populate
+            beq pop_only        ;   fields
             stx PAGE            ; ,,
             jsr SwitchPage      ; ,,
+pop_only:   jsr ClrCursor
+            jsr PopFields       ; ,,
             ldy UNDO_LEV        ; Show the level number
             jsr TwoDigNum       ; ,,
             stx STATUSDISP+18   ; ,,
@@ -2487,6 +2491,8 @@ r_isr:      jmp RFI             ; Restore registers and return from interrupt
 ValBar:     and #$7f            ; Constrain A to 0-127
             ldy #0              ; Y is the position offset
             lsr                 ; Divide A by 2
+            clc                 ; Add one so that zero shows one bar
+            adc #1              ; ,,
             sec                 ; For each 8 units, add a full bar
 -loop:      sbc #8              ; ,,
             bcc rem             ; ,,
@@ -2499,12 +2505,13 @@ ValBar:     and #$7f            ; Constrain A to 0-127
 rem:        eor #$ff            ; Handle the remainder by looking up 255-R
             tax                 ;   in the BarPartial table
             lda BarPartial,x    ;   ,,
--loop:      sta (FIELD),y       ;   ,,
+-loop:      cpy #8
+            beq var_r
+            sta (FIELD),y       ;   ,,
             lda #$20            ; Clear out the rightmost unused characters
             iny                 ; ,,
-            cpy #8              ; ,,
             bne loop            ; ,,
-            rts                 ; ,,
+var_r:      rts                 ; ,,
            
 ; Draw Switch
 ; At field location            
@@ -2924,7 +2931,7 @@ LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,6,7,8,9,10,13,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
-            .byte 1,2,3,4,7,8,9,10,11,12,13,14,15
+            .byte 1,2,3,4,7,8,9,11,12,13,15,16,17
             ;.byte 15,16,17,18 ; Prophet-10
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
@@ -2956,8 +2963,8 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_SWITCH,F_SWITCH
             
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
-            .byte F_WHEEL,F_SWITCH,F_SWITCH,F_VALUE
-            .byte F_SWITCH,F_SWITCH,F_VALUE
+            .byte F_WHEEL,F_VALUE,F_SWITCH,F_SWITCH
+            .byte F_VALUE,F_SWITCH,F_SWITCH
 ;            .byte F_BTMODE,F_SWITCH,F_VALUE,F_FREQ ; P10 parameters
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
@@ -2974,7 +2981,7 @@ TEMPO_FLD:  .byte F_TEMPO,F_64,F_64,F_MUTATIONS
 FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50,51
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
-            .byte 52,87,53,54,13,37,86,41,42,97,38,39,98
+            .byte 52,87,53,54,13,37,86,97,41,42,98,38,39
             ;.byte 90,101,96,95 ; P10 parameters
 
             ; The following are not really NRPN numbers, but use the CVOICE
@@ -3008,7 +3015,7 @@ Edit0:      .asc 30,CR,CR
 Edit1:      .asc 30,CR,"FILTER",CR
             .asc RT,"CUTOFF",CR
             .asc RT,"RESONANCE",CR
-            .asc RT,"ENV AMOUNT",CR
+            .asc RT,"ENVELOPE AMT",CR
             .asc RT,"KEYBOARD",CR
             .asc RT,"REV",CR
             .asc RT,"Q COMP",CR
@@ -3052,12 +3059,12 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"GLIDE RATE",CR
             .asc RT,"VINTAGE",CR
             .asc RT,"WHEEL RANGE",CR
-            .asc RT,"VEL  >FILTER",CR
-            .asc RT,TL,TL,TL,"  >AMP",CR
-            .asc RT,"     AMT",CR
-            .asc RT,"AFT  >FILTER",CR
-            .asc RT,TL,TL,TL,"  >LFO",CR
-            .asc RT,"     AMT"
+            .asc CR,RT,"VELOCITY",CR
+            .asc RT," FILTER",CR
+            .asc RT," AMPLIFIER",CR
+            .asc CR,RT,"AFTERTOUCH",CR
+            .asc RT," FILTER",CR
+            .asc RT," LFO",CR
             ;.asc CR,RT,"P10  MODE",CR
             ;.asc RT,TL,TL,TL,"  LAYER B",CR
             ;.asc RT,"     VOL B",CR
