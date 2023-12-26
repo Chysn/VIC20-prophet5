@@ -408,8 +408,7 @@ SysexFail:  lda #$80            ; This has failed, so make it an unset program,
 ; COMMANDS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; Previous Library Entry
-PrevLib:    ldy CVOICE_IX
-            jsr PackLib
+PrevLib:    jsr PackVoice
             lda #1              ; Default value to substract, one
             sta IX              ; ,,
             ldy SHIFT           ; If shift is held, decrement by 10 instead
@@ -443,14 +442,29 @@ PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
             dey
 ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             jsr DrawCursor
-            ldy PAGE            ; Keep track of the index for the current
+            lda PAGE            ; Are we on the Library View?
+            cmp #4              ; ,,
+            bne lvf_r           ; If so, change the current program
+            jsr PackVoice       ; Pack changes on the current voice to mem
+            lda FIELD_IX        ; Field index
+            sta LAST_LIB_IX+4   ;   ,, (Preserve last library index)
+            clc                 ;   ,,
+            adc VIEW_START      ;   plus start-of-view
+            sec                 ;   ,,
+            sbc TopParamIX+4    ;   minus first page parameter...
+            sta CVOICE_IX       ; ...Equals the new current program index
+            sta TGTLIB_IX       ; ...and the target program index
+            tay                 ; Select this library entry
+            jsr SelLib          ; ,,
+            ldy CVOICE_IX       ; Show program number
+            jsr PopFields       ; ,,
+lvf_r:      ldy PAGE            ; Keep track of the index for the current
             lda FIELD_IX        ;   page
             sta LAST_LIB_IX,y   ;   ,,
 pf_r:       jmp MainLoop
 
 ; Next Library Entry
-NextLib:    ldy CVOICE_IX
-            jsr PackLib
+NextLib:    jsr PackVoice
             lda #1              ; Default value to add, one
             sta IX              ; ,,
             ldy SHIFT           ; If shift is held, increment by 10 instead
@@ -706,9 +720,7 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
             sta CVOICE,x        ; Store it in the current program
             dec IX              ; Decrement the mutation count
             bne mutate          ; Go back for more
-no_mutate:  jsr SetCurPtr       ; Pack program into library
-            jsr PackLib         ; ,,
-            jsr BufferSend      ; Send the edit buffer            
+no_mutate:  jsr BufferSend      ; Send the edit buffer            
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
             jmp MainSwitch
@@ -981,8 +993,7 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             sta PTRD            ;   copying
             lda PTR+1           ;   ,,
             sta PTRD+1          ;   ,,
-            jsr SetCurPtr       ; Now set PTR to the current entry
-            jsr PackLib         ; Pack program data to library prior to copy
+            jsr PackVoice       ; Pack program data to library prior to copy
             ldy #$9f            ; Perform the copy operation
 -loop:      lda (PTR),y         ; ,,
             sta (PTRD),y        ; ,,
@@ -1285,10 +1296,9 @@ Undo:       bit COMMODORE       ; Undo works only with COMMODORE down
             pha                 ; Changing voice, so stash new voice number
             lda UNDO_FIX,y      ; Convert field number to page
             tay                 ; ,,
-            lda FPage,y         ; ,,
-            sta PAGE            ; ,, and set the new page
-            ldy CVOICE_IX       ; Pack the previous voice
-            jsr PackLib         ; ,,
+            ldx FPage,y         ; ,,
+            sta LAST_LIB_IX,x   ; ,,
+            jsr PackVoice       ; Pack the previous voice (is this necessary??)
             pla                 ; Select the new voice
             tay                 ; ,,
             sty CVOICE_IX       ; ,, Set current voice
@@ -2003,7 +2013,8 @@ dv_ok:      ldx #SM_SENT        ; Success!
             
 ; Send Edit Buffer
 ; From the current program        
-BufferSend: lda #<EditBuffer
+BufferSend: jsr PackVoice       ; Pack prior to sending so it's correct
+            lda #<EditBuffer
             ldy #>EditBuffer
             jsr SysexMsg
             lda PTR
@@ -2055,9 +2066,10 @@ un_ncs:     lda #$9f
 un_nce:     jmp Unpack
 
 ; Pack Buffer to Library
-; Library index in Y
-; Generates system exclusive
-PackLib:    jsr Validate        ; Validate the existing library entry, which
+; The current voice
+; Generates system exclusive in a 159-byte voice memory region
+PackVoice:  ldy CVOICE_IX
+            jsr Validate        ; Validate the existing library entry, which
             beq hdr_ok          ;   sets PTR. If OK, continue
             ldy #03             ; Otherwise, generate a sysex header in the
 -loop:      lda PrgDump,y       ;   library, with a group number byte of
@@ -2129,9 +2141,13 @@ send_err:   ldx #SM_FAIL
             rts
 send_r:     clc
             rts
+
+; Save and Select
+;             
+SaveAndSel: 
        
 ; Select Library
-; Unpack specified library index (in Y) to the current program location
+; Unpack specified library index (in Y) to the current voice buffer
 SelLib:     jsr Validate
             beq lib_good
             jsr NewLib
@@ -2482,12 +2498,15 @@ skip_ind:   cmp #ST_SYSEX       ; If sysex,
             ldy TGTLIB_IX       ; Get target library index
             ldx #1              ;   set sysex listen flag
             stx LISTEN          ;   ,,
+            lda #0              ; Unmark an incoming program for selected save
+            sta MARKED,y        ; ,,
             ldx LibraryL,y      ; Set library memory from index
             stx SYIN            ; ,,
             ldx LibraryH,y      ; ,,
             stx SYIN+1          ; ,,
             ldx #0              ; Initialize library location index
             stx SYIN_IX         ; ,,
+            lda #ST_SYSEX       ; Restore byte to sysex start for recording
 sy_catch:   ldx LISTEN          ; If sysex listen flag is on, store the byte to
             beq r_isr           ;   specified memory
 sy_store:   ldy SYIN_IX         ; Get the index and store the byte there
@@ -2718,9 +2737,7 @@ prli_r:     rts
 
 ; Show Hex
 ; For selected program voice sysex
-ShowHex:    ldy CVOICE_IX       ; Pack voice to sysex are before showing
-            jsr PackLib         ; ,,
-            jsr SetCurPtr       ; ,,
+ShowHex:    jsr PackVoice       ; ,,
             ldy #0
             ldx #10             ; X counts values to form a line
 -loop:      lda (PTR),y
