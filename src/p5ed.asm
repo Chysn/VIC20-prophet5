@@ -46,9 +46,8 @@ COMMODORE   = $0c               ; Commodore key flag (merge, swap, etc.)
 PAGE        = $0e               ; Current page number
 CVOICE_IX   = $0f               ; Current voice index
 REPEAT      = $10               ; Repeat speed
-KEYBUFF     = $11               ; Last key pressed
 IX          = $12               ; General use index
-TGTLIB_IX   = $17               ; Target library index
+TVOICE_IX   = $17               ; Target library index
 DISKLIB_IX  = $18               ; Disk library index
 P_RAND      = $19               ; Random number seed (2 bytes)
 S_GROUP     = $1b               ; Group search
@@ -256,8 +255,8 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             jsr $fd52           ; Restore default I/O vectors
             jsr $fdf9           ; Initialize I/O registers
             jsr $e518           ; Initialize hardware
-            lda #$19            ; Set string descriptor pointer, to avoid            
-            sta $16             ;   conflicts with zero page addresses
+            ;lda #$19            ; Set string descriptor pointer, to avoid            
+            ;sta $16             ;   conflicts with zero page addresses
 
             ; Some hardware settings
 Reset:      sei                 ; Disable interrupt; re-enabled at end of Start
@@ -277,7 +276,7 @@ Reset:      sei                 ; Disable interrupt; re-enabled at end of Start
             lda #0              ; ,, Initialize save markers
             sta MARKED,y        ; ,, ,,
             jsr SetLibPtr       ; ,,
-            jsr NewLib          ; ,, Create a new entry
+            jsr NewVoice        ; ,, Create a new entry
 lib_ok:     dec IX
             bpl loop
             
@@ -302,8 +301,8 @@ lib_ok:     dec IX
             sta LISTEN          ;   * Sysex listen flag
             sta PAGE            ;   * Edit page number
             sta NRPN_TX         ;   * NRPN Transmit
-            sta TGTLIB_IX       ;   * Target library entry index
-            sta CVOICE_IX       ;   * Current library entry index
+            sta TVOICE_IX       ;   * Target voice index
+            sta CVOICE_IX       ;   * Current voice index
             sta SEQ_XPORT       ;   * Sequencer transport
             sta SEQ_PLAY_IX     ;   * Sequencer play index
             sta MUTATE          ;   * Generator mutation enable
@@ -313,17 +312,16 @@ lib_ok:     dec IX
             sta PRGCH_TX        ;   * Program change
             lda #8              ;   * Device Number
             sta DEVICE_NUM      ;     ,,
+            sta SEQ_STEPS       ;   * Default sequencer steps
+            sta SEQ_REC_IX      ;   * Recorded step index
             lda #2              ;   * Generator seed 2
             sta SEED2_PRG       ;     ,,
-            lda #8              ;   * Sequencer steps
-            sta SEQ_STEPS       ;     ,,
             lda #30             ;   * Sequencer tempo to 120 BPM
             sta SEQ_TEMPO       ;     ,,
             jsr ResetField      ; Reset page-specific field selections
             
             ; Initialize the sequencer
             ldy #8
-            sty SEQ_REC_IX      ; Set recorded step index
 -loop:      lda DefSeq,y        ; Copy default sequence
             sta SEQUENCE,y      ;   to active sequence
             lda #100            ;   ,,
@@ -348,15 +346,14 @@ MainSwitch: jsr SwitchPage      ; Generate the edit page
 
 ; Main Program Loop
 ; Wait for a key, then act on valid commands            
-MainLoop:   lda #0              ; Unset the Commodore key flag
-            sta COMMODORE       ; ,,
+MainLoop:   clc                 ; Clear Commodore key flag
+            ror COMMODORE       ; ,,
             lda #$40            ; Debounce the key press
 -debounce:  cmp KEY             ; ,,
             bne debounce        ; ,,
 waitkey:    ldx READY           ; If Sysex is ready, handle it
             bne SysexReady      ; ,,
             lda KEY             ; Get key press
-            sta KEYBUFF         ; Store pressed key to avoid race conditions
             cmp #$40            ; If no key down, wait
             bne keydown         ; ,,
             ldx #$30            ; Reset key repeat rate
@@ -366,7 +363,7 @@ keydown:    tay                 ; Preserve key pressed
             ldx #0              ; Look through Key Code table for a valid
 -loop:      lda KeyCode,x       ;   command key press
             beq MainLoop        ;   ,, 0 delimits command list
-            cmp KEYBUFF
+            cmp KEY
             beq cmd_addr
             inx
             bne loop
@@ -385,15 +382,11 @@ dispatch:   rts                 ; Dispatch command with key in A
 ; Handle Incoming SysEx
 SysexReady: lda #0              ; Clear the sysex ready flag
             sta READY           ; ,,
-            lda #" "            ; Disappear the MIDI indicator
-            sta SCREEN          ; ,,            
-            ldy CVOICE_IX       ; Is this a valid Prophet 5 voice dump?
+            ldy CVOICE_IX       ; Is this a valid Prophet-5 voice dump?
             jsr Validate        ; ,,
             bne SysexFail       ; ,,
             ldx #SM_RECV        ; Show received success status
             jsr Status          ; ,,
-            lda PTR             ; PTR was set above by Validate. Use it to
-            ldy PTR+1           ;   unpack the sysex to the buffer
             jsr UnpBuff         ;   ,,
             jsr PopFields       ;   ,,            
 lib_end:    jmp MainLoop
@@ -424,7 +417,7 @@ pl_def:     lda CVOICE_IX       ; Subtract the specified number from the
             sta CVOICE_IX       ; ,,
 switchlib:  jsr ClrCursor
             ldy CVOICE_IX
-            sty TGTLIB_IX
+            sty TVOICE_IX
             jsr SelLib
             jsr PopFields
             ldx #SM_BLANK
@@ -453,7 +446,7 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             sec                 ;   ,,
             sbc TopParamIX+4    ;   minus first page parameter...
             sta CVOICE_IX       ; ...Equals the new current program index
-            sta TGTLIB_IX       ; ...and the target program index
+            sta TVOICE_IX       ; ...and the target program index
             tay                 ; Select this library entry
             jsr SelLib          ; ,,
             ldy CVOICE_IX       ; Show program number
@@ -729,8 +722,6 @@ no_mutate:  jsr BufferSend      ; Send the edit buffer
 ; for current voice                   
 SetPrg:     ldy CVOICE_IX       ; Get program location to TEMPNAME 
             jsr PrgLoc          ; ,,
-            lda PTR             ; Unpack buffer prior to program # change
-            ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
             bit COMMODORE       ; If COMMODORE is held, change all groups
             bpl set_prg         ;   instead of setting one program number
@@ -884,19 +875,20 @@ dump_r:     ldx #SM_BLANK       ; No dump done, clear status
             jmp MainSwitch
 
 ; Erase the current program      
-GoErase:    jsr Popup
-            lda #<EraseConf
-            ldy #>EraseConf
-            jsr PrintStr
-            jsr srcvce_un
-            jsr Keypress
-            cmp #"Y"
-            bne erase_r
-            jsr SetCurPtr
-            jsr NewLib
-            lda PTR 
-            ldy PTR+1
-            jsr UnpBuff 
+GoErase:    jsr Popup           ; Show confirmation popup
+            lda #<EraseConf     ; ,,
+            ldy #>EraseConf     ; ,,
+            jsr PrintStr        ; ,,
+            jsr srcvce_un       ; ,,
+            jsr Keypress        ; ,,
+            cmp #"Y"            ; If Y was pressed erase. Anything else,
+            bne erase_r         ;   return doing nothing
+            jsr SetCurPtr       ; Set pointer to the voice and create new
+            jsr NewVoice        ;   voice
+            jsr UnpBuff         ; Unpack the new sysex into the current buffer
+            ldy CVOICE_IX       ; Unmark erased voice for save
+            lda #0              ; ,,
+            sta MARKED,y        ; ,,
             ldx #SM_ERASED
             .byte $3c           ; Skip word (SKW)
 erase_r:    ldx #SM_BLANK
@@ -1014,8 +1006,6 @@ cp_status:  ldx #SM_COPIED      ; Indicate copy success
             dey                 ;   ,,
             cpy #$05            ;   ,, (leave program numbers alone)
             bne loop            ;   ,,
-            lda PTR             ; Unpack swapped voice into here
-            ldy PTR+1           ; ,,
             jsr UnpBuff         ; ,,
 copy_r:     jmp MainSwitch
 
@@ -1244,8 +1234,6 @@ load_good:  lda #2
             lda #0              ; Reset undo after load
             sta UNDO_LEV        ; ,,
             jsr SetCurPtr       ; Unpack current program into the edit buffer
-            lda PTR             ;   after load, just in case it's changed
-            ldy PTR+1           ;   ,,
             jsr UnpBuff         ;   ,,
             ; Fall through to disk ok
             
@@ -1256,7 +1244,7 @@ disk_canc:  jmp MainSwitch      ; ,,
             
 ; Request Program
 Request:    jsr SetCurPtr       ; Get pointer to sysex in library
-            sty TGTLIB_IX       ; Want the requested program to go HERE
+            sty TVOICE_IX       ; Want the requested program to go HERE
             ldy #4              ; Cannot use the request for a library entry
             lda (PTR),y         ;   that already contains a program
             bmi req_c           ;   ,,
@@ -2041,9 +2029,11 @@ bsend_ok:   ldx #SM_SENT
 bsend_r:    rts
             
 ; Unpack to Buffer
-; A = low byte / Y = high byte of $9f-byte sysex message ($f0 - $f7)
+; Using current PTR
 ; For the UnpSeed endpoint, prepare by setting P_RESULT
-UnpBuff:    ldx #<CVOICE        ; Set program buffer as result
+UnpBuff:    lda PTR
+            ldy PTR+1
+            ldx #<CVOICE        ; Set program buffer as result
             stx P_RESULT
             ldx #>CVOICE
             stx P_RESULT+1
@@ -2150,10 +2140,8 @@ SaveAndSel:
 ; Unpack specified library index (in Y) to the current voice buffer
 SelLib:     jsr Validate
             beq lib_good
-            jsr NewLib
-lib_good:   lda PTR             ; Unpack the library into the edit
-            ldy PTR+1           ;   buffer
-            jsr UnpBuff         ;   ,,
+            jsr NewVoice
+lib_good:   jsr UnpBuff
             ; Fall through to PrgChgMsg
             
 ; Send Program Change
@@ -2204,7 +2192,7 @@ invalid:    rts
 
 ; New Library Entry
 ; With data pointer already in PTR
-NewLib:     ldy #$9f
+NewVoice:   ldy #$9f
             lda #0
 -loop:      sta (PTR),y
             dey
@@ -2495,7 +2483,7 @@ sysexwait:  jsr MIDIIN          ; MIDI byte is in A
             sta COLOR+505       ; ,,
 skip_ind:   cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
-            ldy TGTLIB_IX       ; Get target library index
+            ldy TVOICE_IX       ; Get target library index
             ldx #1              ;   set sysex listen flag
             stx LISTEN          ;   ,,
             lda #0              ; Unmark an incoming program for selected save
@@ -2521,11 +2509,11 @@ sydone:     ldy #0              ; Set listen flag off
             sty LISTEN          ; ,,
             iny                 ; Set ready flag on
             sty READY           ; ,,
-            lda TGTLIB_IX       ; Copy library index to current library index 
+            lda TVOICE_IX       ; Copy library index to current library index 
             sta CVOICE_IX       ; ,,
             cmp #LIB_TOP-1      ; If not at the top entry yet, advance target
             beq r_isr           ;   library index
-            inc TGTLIB_IX       ;   ,,
+            inc TVOICE_IX       ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2672,7 +2660,7 @@ VoiceLine:  lda DRAW_IX         ; Where we are on the page
             tay                 ; Is it a valid program?
             jsr Validate        ; ,,
             beq pl_ok           ; ,,
-            jsr NewLib
+            jsr NewVoice
 pl_ok:      ldy VIEW_IX         ; Add the two-digit program number first
             iny                 ;   +1 because it's 1-indexed
             jsr TwoDigNum       ;   ,,
