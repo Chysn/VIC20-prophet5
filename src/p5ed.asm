@@ -416,12 +416,12 @@ pl_def:     lda CVOICE_IX       ; Subtract the specified number from the
             lda #0              ; ,,
             sta CVOICE_IX       ; ,,
 switchlib:  jsr ClrCursor
-            ldy CVOICE_IX
-            sty TVOICE_IX
-            jsr SelLib
-            jsr PopFields
-            ldx #SM_BLANK
-            jsr Status
+            ldy CVOICE_IX       ; Set the target voice to be the newly-
+            sty TVOICE_IX       ;   selected voice, so new sysex starts here
+            jsr SelLib          ; Select library and show the fields for the
+            jsr PopFields       ;   current page
+            ldx #SM_BLANK       ; Blank the status when a new voice is chosen
+            jsr Status          ; ,,
 chlib_r:    jmp MainLoop
 
 ; Move Cursor to Previous Field            
@@ -1086,7 +1086,8 @@ setup_r:    jmp MainSwitch
 
 ; Disk Save
 ; When Commodore is held, save only the selected voices
-GoSave:     jsr CLALL
+GoSave:     jsr PackVoice
+            jsr CLALL
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
@@ -2867,7 +2868,7 @@ LibDiv:     .byte 0,16,32,48
 
 ; Default Sequence
 ; MIDI note number
-DefSeq:     .byte 60,67,72,67,70,64,68,67
+DefSeq:     .byte 57,60,64,60,69,64,60,64
 
 ; Mutable Parameters
 ; NRPN numbers
