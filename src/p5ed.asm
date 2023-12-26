@@ -89,6 +89,7 @@ SEQ_REC_IX  = CVOICE+$a9        ; Sequence record index
 UNDO_FIX    = $3c00             ; Field Index for undo level (100 levels)
 UNDO_VAL    = UNDO_FIX+UNDOS    ; Values for undo level
 UNDO_VCE    = UNDO_VAL+UNDOS    ; Voice numbers for undo level
+MARKED      = $02b0             ; Save markers (64 bytes)
 SEQUENCE    = $033c             ; Sequence note data (up to 64 steps)
 VELOCITY    = SEQUENCE+SEQS     ; Sequence velocity data (up to 64 steps)
 TEMPNAME    = VELOCITY+SEQS     ; Name storage. Filename, voice name (20 bytes)
@@ -192,7 +193,7 @@ DLOAD       = 21                ; L
 PRGREQ      = 48                ; Q
 UNDO        = 33                ; Z
 HEX         = 26                ; X
-
+MARK        = 14                ; * (asterisk)
 
 ; Field Types
 F_VALUE     = 0                 ; Value field 0-120
@@ -273,6 +274,8 @@ Reset:      sei                 ; Disable interrupt; re-enabled at end of Start
             ldy #LIB_TOP        ; For all 80 locations
             sty IX              ; ,,
 -loop:      ldy IX              ; ,,
+            lda #0              ; ,, Initialize save markers
+            sta MARKED,y        ; ,, ,,
             jsr SetLibPtr       ; ,,
             jsr NewLib          ; ,, Create a new entry
 lib_ok:     dec IX
@@ -1081,13 +1084,16 @@ GoHelp:     lda #7
 setup_r:    jmp MainSwitch
 
 ; Disk Save
-; When Commodore is held, save only the active voice
+; When Commodore is held, save only the selected voices
 GoSave:     jsr CLALL
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
             jsr PrintStr
-            jsr SourceVce
+            bit COMMODORE       ; If the Commodore key was held, show reverse
+            bpl prompt          ;   S to indicate selected voices will be
+            lda #$93            ;   saved
+            sta SCREEN+214      ;   ,,
 prompt:     jsr SetName         ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
@@ -1108,17 +1114,17 @@ start_save: lda #0              ; Turn off KERNAL messages
             jsr CHKOUT          ; ,,
             ldx #SM_SAVING      ; Show "SAVING..."
             jsr Status          ; ,,
-            bit COMMODORE       ; If this is a single-voice save, set the
-            bpl save_lib        ;   disk library index to the current index
-            ldy CVOICE_IX       ;   ,,
-            .byte $3c           ; Skip word (SKW) 
-save_lib:   ldy #0              ; Initialize disk save index
+            ldy #0              ; Initialize disk save index
 -next_rec:  sty DISKLIB_IX      ; ,,
             tya                 ; Show progress bar
             asl                 ; ,, Multiple progress by 2
             jsr ProgPopup       ; ,,
-            ldy DISKLIB_IX      ; Validate the program for save
-            jsr Validate        ; ,,
+            ldy DISKLIB_IX      ; Get library index
+            bit COMMODORE       ; Saving only selected?
+            bpl ok2save         ;   If so,
+            lda MARKED,y        ;   is the program marked?
+            beq snext_prg       ;   If not, skip it
+ok2save:    jsr Validate        ; Is the program valid?
             bne snext_prg       ; ,,
             ldy #0              ; Send sysex to file
 -loop:      lda (PTR),y         ; ,,
@@ -1127,9 +1133,9 @@ save_lib:   ldy #0              ; Initialize disk save index
             beq snext_prg       ;   to next program
             iny                 ; Increment the byte counter and loop
             bne loop            ; ,,
-snext_prg:  bit COMMODORE       ; If this is a single-voice save, 
-            bmi save_r          ;   close it out after the first sysex message
-            ldy DISKLIB_IX      ; Increment the disk library index 
+snext_prg:  ldy DISKLIB_IX      ; Increment the disk library index 
+            lda #0              ; ,, (Reset save mark for this voice)
+            sta MARKED,y        ; ,, ,,
             iny                 ; ,,
             cpy #LIB_TOP        ; Has it reached the end?
             bne next_rec        ; If not, loop
@@ -1203,6 +1209,8 @@ eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual
             jsr Validate        ;   Prophet 5 voice?
             bne next_rec        ;   ,, If not, use the same DISKLIB_IX again
             ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
+            lda #0              ;   ,, (Reset save marker for loaded voice)
+            sta MARKED,y        ;   ,,
             jsr TwoDigNum       ;   in the status area.
             stx STATUSDISP+18   ;   ,,
             sta STATUSDISP+19   ;   ,,
@@ -1314,6 +1322,18 @@ pop_only:   jsr ClrCursor
             stx STATUSDISP+18   ; ,,
             sta STATUSDISP+19   ; ,,
 undo_r:     jmp MainLoop
+
+; Mark Voice for Save
+Mark:       ldy CVOICE_IX
+            lda MARKED,y
+            eor #$01
+            sta MARKED,y
+            jsr savemark        ; Takes Y as index
+            lda PAGE            ; If this is the Library View, refresh the
+            cmp #4              ;   screen, because the mark indicator there
+            bne mark_r          ;   might change
+            jsr PopFields       ;   ,,
+mark_r:     jmp MainLoop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
@@ -1544,7 +1564,13 @@ vce_num:    stx STATUSDISP+5    ; ,,
             sta STATUSDISP+1    ; Show the ones place as a numeral
             lda #$6f            ; Show a little header for the library number
             sta STATUSDISP-22   ;   so it's easier to read
-            sta STATUSDISP-21   ;   ,,            
+            sta STATUSDISP-21   ;   ,,        
+savemark:   lda MARKED,y        ; Show or hide the Save mark
+            bne mark_on         ; ,,
+            lda #" "            ; ,,
+            .byte $3c           ; ,. Skip word (SKW)
+mark_on:    lda #$93            ; ,, (Reverse S screen code)
+            sta STATUSDISP+7    ; .. Add to status display    
             rts
           
 ; Clear Previous Cursor 
@@ -2197,7 +2223,7 @@ ResetField: ldy #7              ; Set last library indexes for each page
             bpl loop            ;   ,,
             inc LAST_LIB_IX     ;   ,, Page 0 is +1 because of the name                     
             rts
-
+       
 ; Pseudo-Random
 ; One bit            
 PRand:      lsr P_RAND
@@ -2618,7 +2644,7 @@ haveoct:    pha                 ; Save the note number for later lookup
             rts
             
 ; Draw Voice Line   
-VceLine:    lda DRAW_IX         ; Where we are on the page
+VoiceLine:  lda DRAW_IX         ; Where we are on the page
             clc                 ; Add the library view's offset
             adc VIEW_START      ; ,,
             sec                 ; Subtract the page's parameter offset
@@ -2636,17 +2662,25 @@ pl_ok:      ldy VIEW_IX         ; Add the two-digit program number first
             dey                 ; ,,
             txa                 ; ,,
             sta (FIELD),y       ; ,,
-            ldy VIEW_IX         ; Get the Prophet 5 program number and
-            jsr PrgLoc          ;   add that to the display line
-            ldy #3              ;   ,,
-            lda TEMPNAME        ;   ,,
-            sta (FIELD),y       ;   ,,
-            iny                 ;   ,,
-            lda TEMPNAME+1      ;   ,,
-            sta (FIELD),y       ;   ,,
-            iny                 ;   ,,
-            lda TEMPNAME+2      ;   ,,
-            sta (FIELD),y       ;   ,,
+            ldx VIEW_IX         ; Get the Prophet 5 program number
+            lda MARKED,x        ; ,, (if marked for save, show the reverse
+            bne is_marked       ; ,, S after the voice number)
+            lda #" "            ; ,, 
+            .byte $3c           ; ,, Skip word (SKW)
+is_marked:  lda #$93            ; ,,
+            ldy #2              ; ,,
+            sta (FIELD),y       ; ,,
+            ldy VIEW_IX         ; Add program number to the display line
+            jsr PrgLoc          ; ,,
+            ldy #3              ; ,,
+            lda TEMPNAME        ; ,,
+            sta (FIELD),y       ; ,,
+            iny                 ; ,,
+            lda TEMPNAME+1      ; ,,
+            sta (FIELD),y       ; ,,
+            iny                 ; ,,
+            lda TEMPNAME+2      ; ,,
+            sta (FIELD),y       ; ,,
             lda PTR
             sta P_START
             sta P_END
@@ -2838,30 +2872,30 @@ Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
             .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
             .byte VOICESEND,CLEAR,COPY,RUN,REST,BACKSP,DSAVE,DLOAD
-            .byte PRGREQ,UNDO,HEX,0
+            .byte PRGREQ,UNDO,HEX,MARK,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
             .byte <EditName-1,<PrevLib-1,<NextLib-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<GoSend-1
             .byte <GoErase-1,<GoCopy-1,<Sequencer-1,<AddRest-1,<DelNote-1
-            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1
+            .byte <GoSave-1,<GoLoad-1,<Request-1,<Undo-1,<GoHex-1,<Mark-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
             .byte >EditName-1,>PrevLib-1,>NextLib-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>GoSend-1
             .byte >GoErase-1,>GoCopy-1,>Sequencer-1,>AddRest+1,>DelNote-1
-            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1
+            .byte >GoSave-1,>GoLoad-1,>Request-1,>Undo-1,>GoHex-1,>Mark-1
 
 ; Field type subroutine addresses
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
 ; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
 ; 17=Tempo, 18=Q Comp, 19=MIDI Channel, 20 Bi-Timbral Mode
-TSubL:      .byte <ValBar-1,<VceLine-1,<Switch-1,<Enum-1
+TSubL:      .byte <ValBar-1,<VoiceLine-1,<Switch-1,<Enum-1
             .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Num1Ind-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
             .byte <QComp-1,<Enum-1
-TSubH:      .byte >ValBar-1,>VceLine-1,>Switch-1,>Enum-1
+TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
             .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Num1Ind-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
             .byte >QComp-1,>Enum-1
@@ -3102,8 +3136,8 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," V    ",30," SEND ",5,RVON,"C=",RVOF,30,"FACTORY",CR
             .asc 5," Q    ",30," REQUEST PROG",CR
             .asc 5," G    ",30," GENERATE VOICE",CR
-            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,30,"@ CURR",CR
-            .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,30,"VOICE",CR
+            .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,30,"AT CURR",CR
+            .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,30,"*MARKED",CR
             .asc 5," X    ",30," HEX VIEW",CR
             .asc 5," RUN  ",30," SEQ PLAY/STOP",CR
             .asc 5," ",RVON,"C=",RVOF,"RUN",30," SEQ RECORD"
