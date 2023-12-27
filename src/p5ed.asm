@@ -1150,8 +1150,6 @@ ok2save:    jsr Validate        ; Is the program valid?
             iny                 ; Increment the byte counter and loop
             bne loop            ; ,,
 snext_prg:  ldy DISKLIB_IX      ; Increment the disk library index 
-            lda #0              ; ,, (Reset save mark for this voice)
-            sta MARKED,y        ; ,, ,,
             iny                 ; ,,
             cpy #LIB_TOP        ; Has it reached the end?
             bne next_rec        ; If not, loop
@@ -1337,17 +1335,26 @@ pop_only:   jsr ClrCursor
 undo_r:     jmp MainLoop
 
 ; Mark Voice for Save
-Mark:       ldy CVOICE_IX
+Mark:       bit COMMODORE       ; If Commodore was held down, clear out
+            bmi clearmarks      ;   all the save marks
+            ldy CVOICE_IX
             lda MARKED,y
             eor #$01
             sta MARKED,y
-            jsr savemark        ; Takes Y as index
+markupdate: jsr savemark        ; Takes Y as index
             lda PAGE            ; If this is the Library View, refresh the
             cmp #4              ;   screen, because the mark indicator there
             bne mark_r          ;   might change
             jsr PopFields       ;   ,,
 mark_r:     jmp MainLoop
-
+clearmarks: lda #0              ; If Commodore was held down, clear all
+            ldy #LIB_TOP        ;   of the save marks
+-loop:      sta MARKED,y        ;   ,,
+            dey                 ;   ,,
+            bpl loop            ;   ,,
+            ldy CVOICE_IX       ;   ,, Set index for savemark
+            bpl markupdate      ;   ,, (unconditional because of LDY)
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; INTERFACE SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
