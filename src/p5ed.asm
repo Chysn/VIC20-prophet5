@@ -1,18 +1,33 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
 ;                               Ed for Prophet-5
-;                            (c)2023, Jason Justian
+;                           (c) 2023, Jason Justian
 ;                  
 ; Assembled with XA
+; Version 1.0 December 23, 2023
 ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
-; This software is released under the Creative Commons
-; Attribution-NonCommercial 4.0 International
-; License. The license should be included with this file.
-; If not, please see: 
+; Copyright (c) 2023, Jason Justian
 ;
-; https://creativecommons.org/licenses/by-nc/4.0/legalcode.txt
+; Permission is hereby granted, free of charge, to any person obtaining a copy
+; of this software and associated documentation files (the "Software"), to deal
+; in the Software without restriction, including without limitation the rights
+; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+; copies of the Software, and to permit persons to whom the Software is
+; furnished to do so, subject to the following conditions:
+;
+; The above copyright notice and this permission notice shall be included in all
+; copies or substantial portions of the Software.
+;
+; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+; SOFTWARE.
+;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; CARTRIDGE LAUNCHER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -41,7 +56,7 @@ SYIN_IX     = $04               ; Sysex In position index
 PTR         = $05               ; Library pointer (2 bytes)
 PTRD        = $07               ; Destination pointer (2 bytes)
 FIELD_IX    = $0a               ; Current field index
-VIEW_START  = $0b               ; Library view start entry
+VIEW_START  = $0b               ; Voice index for current Library View page
 COMMODORE   = $0c               ; Commodore key flag (merge, swap, etc.)
 PAGE        = $0e               ; Current page number
 CVOICE_IX   = $0f               ; Current voice index
@@ -275,8 +290,8 @@ Reset:      sei                 ; Disable interrupt; re-enabled at end of Start
 -loop:      ldy IX              ; ,,
             lda #0              ; ,, Initialize save markers
             sta MARKED,y        ; ,, ,,
-            jsr SetLibPtr       ; ,,
-            jsr NewVoice        ; ,, Create a new entry
+            jsr VoicePtr        ; ,,
+            jsr NewVoice        ; ,, Create a new voice
 lib_ok:     dec IX
             bpl loop
             
@@ -330,13 +345,12 @@ lib_ok:     dec IX
             bpl loop
             
             ; Initialize user interface
-            ldy CVOICE_IX       ; Select first library entry
+            ldy CVOICE_IX       ; Select first voice
             jsr SelLib          ; ,,
             ldx #SM_WELCOME     ; Show welcome message in status bar
             jsr Status          ; ,,
             cli                 ; Start Interrupt
             ; Fall through to MainSwitch
-
 
 ; Switch page and Main Loop
 ; A shortcut for a common pattern, redraw the page, then
@@ -447,7 +461,7 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             sbc TopParamIX+4    ;   minus first page parameter...
             sta CVOICE_IX       ; ...Equals the new current program index
             sta TVOICE_IX       ; ...and the target program index
-            tay                 ; Select this library entry
+            tay                 ; Select this voice
             jsr SelLib          ; ,,
             ldy CVOICE_IX       ; Show program number
             jsr PopFields       ; ,,
@@ -599,7 +613,7 @@ sel_prog:   tya                 ; Field index
             sec                 ;   ,,
             sbc TopParamIX+4    ;   minus first page parameter...
             sta CVOICE_IX       ; ...Equals the new current program index
-            tay                 ; Select this library entry
+            tay                 ; Select this voice
             jsr SelLib          ; ,,
             lda #0              ; Drill down to edit page
             sta PAGE            ; ,,
@@ -652,10 +666,10 @@ fc_r:       sty IX              ;   ,,
 
 ; Generate Program
 ; From two spefcified parent programs in the library
-Generate:   ldy CVOICE_IX       ; First, make sure that the current library
-            jsr Validate        ;   entry is either invalid, or lacks a
+Generate:   ldy CVOICE_IX       ; First, make sure that the current voice
+            jsr Validate        ;   is either invalid, or lacks a
             bne gen_ok          ;   program number. We don't want to overwrite
-            ldy #4              ;   something that's already in the library.
+            ldy #4              ;   an assigned program.
             lda (PTR),y         ;   ,,
             bmi gen_ok          ;   ,,
             ldx #SM_NOTEMPTY    ;   ,, Show failure message if not allowed
@@ -816,7 +830,7 @@ grp_done:   lda IX              ; If no group was entered, go back for more
             ldy #0              ; Go through each program, looking for the
 -loop:      sty IX              ;   
             ldy IX
-            jsr SetLibPtr
+            jsr VoicePtr
             ldy #4              ; Group number sysex byte
             lda (PTR),y         ; ,,
             cmp S_GROUP         ; ,,
@@ -837,7 +851,7 @@ GoSend:     ldy CVOICE_IX       ; If this is not a valid program, cannot
             jsr Validate        ;   do dump
             bne dump_r          ;   ,,
             jsr Popup           ; Put the dump selection menu 
-            ldy #4              ; Does this entry have a program number?
+            ldy #4              ; Does this voice have a program number?
             lda (PTR),y         ; ,,
             bpl all_opt         ; ,, If so, show all options
             lda #<SendMenu2     ; ,, If no prog number, show only edit buffer
@@ -906,7 +920,7 @@ GoCopy:     jsr Popup
             ldy #>SwapLabel   
 copy_lab:   jsr PrintStr
             jsr srcvce_un       ; Show the source voice         
-            ldy #0              ; Set up editor for library number entry
+            ldy #0              ; Set up editor for voice
             sty IX              ; ,, Set current cursor position
 cpos_cur:   lda #TXTCURSOR      ; ,, Add cursor at beginning
             sta WINDOW_ED,y     ; ,,
@@ -973,9 +987,9 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             sbc #1              ;   ,,
             bne loop            ;   ,,
             cld                 ;   ,,
-            dey                 ; Re-zero-index the library entry number
-            jsr SetLibPtr       ; Set PTR to this library entry
-            ldy #$9e            ; Copy the selected entry into the temporary
+            dey                 ; Re-zero-index the voice number
+            jsr VoicePtr        ; Set PTR to this voice
+            ldy #$9e            ; Copy the selected voice into the temporary
 -loop:      lda (PTR),y         ;   buffer for swap. Yeah, this is done whether
             sta TEMPBUFF,y      ;   or not swap is actually selected.
             dey                 ;   ,,
@@ -1190,8 +1204,8 @@ start_load: lda #0              ; Turn off KERNAL messages
             bpl load_cur        ; ,,  If so, start at current voice
             ldy CVOICE_IX       ; ,,  ,,
 load_cur:   sty DISKLIB_IX      ; ,,
--next_rec:  ldy DISKLIB_IX      ; Get next library pointer
-            jsr SetLibPtr       ; Get next library pointer
+-next_rec:  ldy DISKLIB_IX      ; Get next voice pointer
+            jsr VoicePtr        ; ,,
             ldy #0              ; Index within current message
 get_byte:   jsr READST
             bne eof
@@ -1203,12 +1217,12 @@ get_byte:   jsr READST
             bne get_byte        ; Go back for next byte
 ch_sysex:   cpy #0              ; Has sysex started?
             beq get_byte        ; If not, go back
-            sta (PTR),y         ; Store in current library entry
+            sta (PTR),y         ; Store in current voice
             iny                 ; Increment the message index
             cmp #ST_ENDSYSEX    ; Is this the end of the record?
             bne get_byte        ; ,,
 eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual 
-            jsr Validate        ;   Prophet 5 voice?
+            jsr Validate        ;   Prophet-5 voice?
             bne next_rec        ;   ,, If not, use the same DISKLIB_IX again
             ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
             lda #0              ;   ,, (Reset save marker for loaded voice)
@@ -1246,8 +1260,8 @@ disk_canc:  jmp MainSwitch      ; ,,
 ; Request Program
 Request:    jsr SetCurPtr       ; Get pointer to sysex in library
             sty TVOICE_IX       ; Want the requested program to go HERE
-            ldy #4              ; Cannot use the request for a library entry
-            lda (PTR),y         ;   that already contains a program
+            ldy #4              ; Cannot use the request for a voice
+            lda (PTR),y         ;   that is already assigned to a program
             bmi req_c           ;   ,,
             ldx #SM_NOTEMPTY    ;   ,,
             jsr Status
@@ -1549,7 +1563,7 @@ ShowPrgNum: ldy CVOICE_IX       ; Get current program number
             bcc vce_num         ;   ,,
             ldx #$86            ; A reverse "F"
 vce_num:    stx STATUSDISP+5    ; ,,
-            ldy CVOICE_IX       ; Get current library entry 
+            ldy CVOICE_IX       ; Get current voice 
             iny                 ; Library entries are 1-indexed for display
             jsr TwoDigNum       ; Get the number
             dey                 ; Return library to 0-indexed
@@ -1766,7 +1780,7 @@ tensp:      ora #$30            ; A is the ones place at this point
             rts
                                                 
 ; Get Program Location
-; For library entry in Y
+; For voice index in Y
 ; For display. Sets 3 TEMPNAME  locations with group, bank, and program numbers
 PrgLoc:     jsr Validate        ; Set library pointer and validate
             bne unset           ; Show unset location if not valid sysex
@@ -1924,10 +1938,10 @@ fvce_r:     rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Dump Single Program
 ; At the current library
-; To dump another library, set PTR and call the DumpVce endpoint instead
+; To dump another voice, set PTR and call the DumpVoice endpoint instead
 DumpPrg:    jsr SetCurPtr
             sty IX              ; Store in temporary index for status message
-            jsr DumpVce
+            jsr DumpVoice
             jmp MainSwitch
 
 ; Dump Bank or Group
@@ -1947,7 +1961,7 @@ DumpBank:   clc                 ; Clear DUMPTYPE flag to indicate bank dump
             sta S_BANK          ;   and set it as the search bank
             ldy #0              ; IX is going to be the index of the search
             sty IX              ; ,,
--loop:      jsr Validate        ; Set the pointer to this library entry
+-loop:      jsr Validate        ; Set the pointer to this voice
             bne d_nomatch       ; ,,
             ldy #4              ; If the group number is $80, it means there's
             lda (PTR),y         ;   no program number set
@@ -1961,8 +1975,8 @@ DumpBank:   clc                 ; Clear DUMPTYPE flag to indicate bank dump
             and #$f8            ; ,,
             cmp S_BANK          ; Does it match the bank?
             bne d_nomatch       ; ,,
-d_match:    jsr DumpVce         ; If it does, dump the library entry
-d_nomatch:  inc IX              ; Move to the next library entry
+d_match:    jsr DumpVoice       ; If it does, dump the voice
+d_nomatch:  inc IX              ; Move to the next voice
             lda IX              ; Draw the value bar based on index
             asl                 ;   ,, (twice the index, actually)
             jsr ProgPopup       ;   ,,
@@ -1972,8 +1986,8 @@ d_nomatch:  inc IX              ; Move to the next library entry
             jmp MainSwitch
             
 ; Dump a Voice
-; Set PTR before the call with SetLibPtr or Validate            
-DumpVce:    ldy #0              ; Set the output index
+; Set PTR before the call with VoicePtr or Validate            
+DumpVoice:  ldy #0              ; Set the output index
 -loop:      lda (PTR),y         ; Get the next byte to output
             cpy #4              ; Is this the group number byte?
             bne dv_send         ; ,, If not, send
@@ -1992,7 +2006,7 @@ dv_send:    jsr MIDIOUT         ; Send it to the Beige Maze MIDI KERNAL
 dv_err:     ldx #SM_FAIL        ; Fail by either (1) timing out at the
             jmp Status          ;   interface, or (2) invalid sysex
 dv_ok:      ldx #SM_SENT        ; Success!
-            jsr Status          ; Show the status and the library entry
+            jsr Status          ; Show the status and the voice
             ldy IX              ;   number
             iny                 ;   ,, (which is 1-indexed)
             jsr TwoDigNum       ;   ,,
@@ -2060,7 +2074,7 @@ un_nce:     jmp Unpack
 ; The current voice
 ; Generates system exclusive in a 159-byte voice memory region
 PackVoice:  ldy CVOICE_IX
-            jsr Validate        ; Validate the existing library entry, which
+            jsr Validate        ; Validate the existing voice, which
             beq hdr_ok          ;   sets PTR. If OK, continue
             ldy #03             ; Otherwise, generate a sysex header in the
 -loop:      lda PrgDump,y       ;   library, with a group number byte of
@@ -2166,11 +2180,11 @@ PrgChgMsg:  lda PRGCH_TX        ; Is program change transmit on?
             jsr PROGRAMC        ;   ,,
 pch_r:      rts
 
-; Set Library Pointer
-; to entry index in Y
+; Set Voice Pointer
+; to voice index in Y
 SetCurPtr:  ldy CVOICE_IX       ; For this endpoint, use the current index
-SetLibPtr:  lda LibraryL,y      ; In case of soft reset, advance library
-            sta PTR             ;   pointer to the last library entry
+VoicePtr:   lda LibraryL,y      ; In case of soft reset, advance library
+            sta PTR             ;   pointer to the last voice
             lda LibraryH,y      ;   ,,
             sta PTR+1           ;   ,,
             rts
@@ -2179,7 +2193,7 @@ SetLibPtr:  lda LibraryL,y      ; In case of soft reset, advance library
 ; Check sysex for Program Dump message, and #$7f in the right place
 ; Library index in Y
 ; Valid if zero flag is set
-Validate:   jsr SetLibPtr
+Validate:   jsr VoicePtr
             ldy #3
 -loop:      lda (PTR),y
             cmp PrgDump,y
@@ -2214,7 +2228,7 @@ NewVoice:   ldy #$9f
             ldy #$9e            ; ,,
             lda #ST_ENDSYSEX    ; Create the end-of-sysex delimiter
             sta (PTR),y         ; ,,
-            lda #$80            ; For a new library entry, set the program
+            lda #$80            ; For a new voice, set the program
             ldy #4              ;   number to unset
             sta (PTR),y         ;   ,,
             ; Fall through to Reset Field
@@ -2512,7 +2526,7 @@ sydone:     ldy #0              ; Set listen flag off
             sty READY           ; ,,
             lda TVOICE_IX       ; Copy library index to current library index 
             sta CVOICE_IX       ; ,,
-            cmp #LIB_TOP-1      ; If not at the top entry yet, advance target
+            cmp #LIB_TOP-1      ; If not at the top voice yet, advance target
             beq r_isr           ;   library index
             inc TVOICE_IX       ;   ,,
 r_isr:      jmp RFI             ; Restore registers and return from interrupt
@@ -2863,14 +2877,14 @@ SyxExt:     .asc ".SYX,P,W"
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 
 ; Library Divisions
-; Start entry for each library view page
+; Start voice index for each Library View page
 LibDiv:     .byte 0,16,32,48
 
 ; Default Sequence
 ; MIDI note number
 DefSeq:     .byte 57,60,64,60,69,64,60,64
 
-; Mutable Parameters
+; Mutable Parameters for Generate
 ; NRPN numbers
 Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 
@@ -2896,29 +2910,27 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 0=Value Bar, 1=Program, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
 ; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
-; 17=Tempo, 18=Q Comp, 19=MIDI Channel, 20 Bi-Timbral Mode
+; 17=Tempo, 18=Q Comp
 TSubL:      .byte <ValBar-1,<VoiceLine-1,<Switch-1,<Enum-1
             .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Num1Ind-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1,<BPM-1
-            .byte <QComp-1,<Enum-1
+            .byte <QComp-1
 TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
             .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Num1Ind-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1,>BPM-1
-            .byte >QComp-1,>Enum-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,16,  0,0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,80,112,2
+            .byte >QComp-1
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,16,  0
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,80,112
 
 ; Enum NRPN, integer values, and enum text locations
-EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,90,90,90
-EnumInt:    .byte 0,  1, 2, 0, 1, 0, 1, 2, 3, 4, 5, 0, 1, 2
+EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87
+EnumInt:    .byte 0,  1, 2, 0, 1, 0, 1, 2, 3, 4, 5
 EnumTxtL:   .byte <NoTrack,<HalfTrack,<FullTrack
             .byte <Rev1,<Rev3
             .byte <LO,<LOR,<LAS,<LAR,<HI,<HIR
-            .byte <NOR,<STC,<SPL
 EnumTxtH:   .byte >NoTrack,>HalfTrack,>FullTrack
             .byte >Rev1,>Rev3
             .byte >LO,>LOR,>LAS,>LAR,>HI,>HIR
-            .byte >NOR,>STC,>SPL
 
 ; Enum field text
 NoTrack:    .asc "NONE",0       ; Filter keyboard modes
@@ -2932,9 +2944,6 @@ LAS:        .asc "LAS",0        ; ,,
 LAR:        .asc "LAR",0        ; ,,
 HI:         .asc "HI ",0        ; ,,
 HIR:        .asc "HIR",0        ; ,,
-NOR:        .asc "NOR",0        ; Prophet 10 bi-timbral modes
-STC:        .asc "STC",0        ; ,,
-SPL:        .asc "SPL",0        ; ,,
 
 ; Note Name Tables
 ; Flats are constructed of two screen code characters, Commodre-M and
