@@ -399,6 +399,8 @@ SysexReady: lda #0              ; Clear the sysex ready flag
             ldy CVOICE_IX       ; Is this a valid Prophet-5 voice dump?
             jsr Validate        ; ,,
             bne SysexFail       ; ,,
+            ldy CVOICE_IX       ; Clear undo data for this voice
+            jsr ClrUndo         ; ,,
             ldx #SM_RECV        ; Show received success status
             jsr Status          ; ,,
             jsr UnpBuff         ;   ,,
@@ -1222,10 +1224,12 @@ ch_sysex:   cpy #0              ; Has sysex started?
 eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual 
             jsr Validate        ;   Prophet-5 voice?
             bne next_rec        ;   ,, If not, use the same DISKLIB_IX again
-            ldy DISKLIB_IX      ; END OF RECORD. Show the disk library index
+            ldy DISKLIB_IX      ; END OF RECORD. Get disk voice index
             lda #0              ;   ,, (Reset save marker for loaded voice)
-            sta MARKED,y        ;   ,,
-            jsr TwoDigNum       ;   in the status area.
+            sta MARKED,y        ;   ,, ,,
+            jsr ClrUndo         ;   ,, (Clear undo levels for this voice)
+            iny                 ;   Increment index for 1-indexed display
+            jsr TwoDigNum       ;   Show voice index in status area
             stx STATUSDISP+18   ;   ,,
             sta STATUSDISP+19   ;   ,,
             lda DISKLIB_IX      ; Show progress bar
@@ -1244,8 +1248,6 @@ eof:        and #$40            ; If this is a read error, show error message
 load_good:  lda #2
             jsr CLOSE
             jsr CLRCHN
-            lda #0              ; Reset undo after load
-            sta UNDO_LEV        ; ,,
             jsr SetCurPtr       ; Unpack current program into the edit buffer
             jsr UnpBuff         ;   ,,
             ; Fall through to disk ok
@@ -2167,10 +2169,10 @@ lib_good:   jsr UnpBuff
 ; Including bank select, for the current voice pointer, if it's a program
 PrgChgMsg:  lda PRGCH_TX        ; Is program change transmit on?
             beq pch_r           ; ,, If not, do nothing
-            ldy #4              ; ,,
+            ldy #4              ; Get group nunber
             lda (PTR),y         ; ,,
-            bmi pch_r           ; ,, If not, do nothing
-            pha                 ; Save for bank select message
+            bmi pch_r           ; If unret, do nothing
+            pha                 ; Save group for bank select message
             ldx #$00            ; Send bank select message using group
             ldy #$00            ; ,,
             jsr CONTROLC        ; ,, Bank select MSB
@@ -2272,6 +2274,19 @@ Rand127:    lda #%00000010      ; 7-bit
             lda RANDOM
             rts
 
+; Clear Undo Leveels
+; For voice index in Y            
+ClrUndo:    sty IX
+            ldx UNDO_LEV
+-loop:      lda UNDO_VCE,x
+            cmp IX
+            bne nx_clr
+            lda #$ff
+            sta UNDO_VCE,x
+nx_clr:     dex
+            bpl loop
+            rts
+            
 ; Set Undo
 ; Manage undo levels    
 SetUndo:    txa 
