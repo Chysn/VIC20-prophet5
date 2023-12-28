@@ -2491,9 +2491,8 @@ NMISR:      pha                 ; NMI does not automatically save registers like
             pla                 ;   ,,
             jmp Reset           ; Reset application
 ignore:     jmp RFI             ; Back to normal NMI, after register saves
-midi:       ldy SEQ_XPORT       ; If in note record mode, ignore sysex
-            cpy #$01            ; ,,
-            bne sysexwait       ; ,,
+midi:       ldy SEQ_XPORT       ; If in sequencer mode, ignore sysex
+            beq sysexwait       ; ,,
             jsr MAKEMSG         ; Build MIDI message
             jmp RFI             ; ,,
 sysexwait:  jsr MIDIIN          ; MIDI byte is in A
@@ -2502,7 +2501,7 @@ sysexwait:  jsr MIDIIN          ; MIDI byte is in A
             sta COLOR+505       ; ,,
 skip_ind:   cmp #ST_SYSEX       ; If sysex, 
             bne sy_catch        ;   ,,
-            ldy TVOICE_IX       ; Get target library index
+            ldy TVOICE_IX       ; Get target voice index
             ldx #1              ;   set sysex listen flag
             stx LISTEN          ;   ,,
             lda #0              ; Unmark an incoming program for selected save
@@ -2522,12 +2521,12 @@ sy_store:   ldy SYIN_IX         ; Get the index and store the byte there
             beq sydone          ; ,,
             inc SYIN_IX         ; Increment storage index. If it exceeds 160
             lda SYIN_IX         ;   end the sysex, for a likely error message,
-            cmp #$a0            ;   but we don't want it to overwrite subsequent
+            cmp #$a0            ;   But we don't want it to overwrite subsequent
             bcc r_isr           ;   voice's memory.
 sydone:     ldy #0              ; Set listen flag off
             sty LISTEN          ; ,,
-            iny                 ; Set ready flag on
-            sty READY           ; ,,
+            iny                 ; Set sysex ready flag on, to be handled in
+            sty READY           ;   the main loop
             lda TVOICE_IX       ; Copy library index to current library index 
             sta CVOICE_IX       ; ,,
             cmp #LIB_TOP-1      ; If not at the top voice yet, advance target

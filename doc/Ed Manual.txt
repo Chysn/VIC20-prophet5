@@ -1,0 +1,342 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Ed for Prophet-5
+and Commodore VIC-20
+
+Jason Justian
+Beige Maze VIC Lab
+
+December 2023
+
+beigemaze.com/ed
+
+Contents
+
+About Ed for Prophet-5	4
+	Software License	5
+Terminology	6
+Status Bar	6
+Popup Windows	7
+Basic Navigation	7
+Help Screen	7
+Setup Screen	8
+Edit Screens	9
+	Undo	9
+System Exclusive (Sysex) Data	10
+	Send from Your Prophet-5 to Ed	10
+	Request a Program from Your Prophet-5	10	
+	Send from Ed to Your Prophet-5	11
+	Send Factory Programs	11
+Disk Operations	12
+	Save Library	12
+	Save Marked Voices	12
+	Load Library	13	
+Managing Your Library	14
+	Copy Voice	14
+	Swap Voices	14
+	Change Program Number	15	
+	Change Group Numbers	15
+	Erase a Voice	16
+	Reset Ed for Prophet-5	16
+Library View	17
+Hex View	17
+Sequencer	18	
+	Recording and Editing	18
+	Playback	19
+Voice Generation	20
+About Ed for Prophet-5
+
+The Sequential Prophet-5 and the Commodore VIC-20 were roughly contemporaneous products by two great companies. With the advent of the MIDI-capable Prophet-5 Rev. 4, Ed for Prophet-5 aims to be the bridge between these two legends.
+
+Ed for Prophet-5 is a full-featured editor/librarian for Prophet-5. It takes advantage of the remarkable Jolly Cartridge platform with an on-board 8K of RAM expansion, allowing access to a 64-voice library at any one time.
+
+Ed works with the VIC Lab MIDI interface to send and receive system exclusive (hereafter, "sysex") data to and from the Prophet-5. Voices can be edited directly in Ed, with the option of real-time transmission of parameter data to the instrument using NRPN parameters. Ed's editor has 100 levels of undo for editing operations.
+
+Ed offers several library management features, including the ability to re-organize and renumber programs. Ed also provides a utility to generate random genetic hybrids of selected voices, with optional mutations. Ed also features a step sequencer with up to 64 steps.
+
+In short, Ed is the finest Prophet-5 editor/librarian ever developed for the Commodore VIC-20. I hope you enjoy using it as much as I enjoyed building it.
+
+Be Excellent To Each Other,
+
+Jason
+Software License
+
+Copyright 2023, Jason Justian
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.Terminology
+
+The following terminology will be useful throughout this manual.
+
+A voice contains the parameters that describe a single Prophet-5 sound. A voice may or may not have a Prophet-5 program number associated with it.
+
+A program is a voice that has a Prophet-5 program number associated with it. The Prophet-5 program number is comprised of a group (1-5), a bank (1-5), and a sound number (1-8).
+
+The library is the set of voices in the VIC-20's memory at any one time. Since the Ed for Prophet-5 cartridge has 8K of RAM on board, a library contains 64 voices.
+
+Status Bar
+
+The bottom line of each screen shows the status bar. The status bar contains the current voice number, in green, from 01 to 64.
+
+To the right of that is the program number, in red. If no program number is assigned to the voice, this will show ---. A reverse F following the program number indicates a Factory program.
+
+Most operations will set a status message, which will be displayed in the status bar.
+
+Rightmost in the status bar, an asterisk (*) flashes to indicate incoming MIDI messages.
+Popup Windows
+
+Many operations involve a popup window which opens in the center of the screen. This is used to gather information or confirm the operation. Any popup window can be dismissed by pressing the left-arrow key at the upper-left of the VIC-20's keyboard.
+
+Basic Navigation
+
+Most Ed screens allow some form of editing. A yellow diamond indicates the setting or parameter that is currently selected.
+
+To select a parameter, use the CRSR keys at the bottom right of the VIC-20 keyboard. To edit the value of a parameter, use the < and > keys. Pressing RETURN will increment a parameter.
+
+Switches are circles, filled in when set. They are highlighted in yellow when selected. They can be switched on (>) or off (<), or toggled with RETURN.
+
+The + and - keys select the next or previous voice in the library. Hold down C= to go back or forth 10 voices.
+
+Help Screen
+
+Press H to display the Help Screen
+
+The Help Screen will show a summary of most Ed operations. When indicated, the C= in reverse text means that you hold down the Commodore key while pressing the key to access an alternate function.Setup Screen
+
+Press SPACE to display the Setup Screen
+
+The Setup Screen lets you set up global settings that are not specific to any voice. These include:
+
+MIDI Channel: This is the MIDI channel for any NRPN messages, program changes, and recording and playback of the sequencer.
+
+Send NRPN: Enables transmission of NRPN messages when voice parameters are changed. Make sure that (1) NRPN is enabled on the Prophet-5, and (2) the MIDI channel matches the channel of the Prophet-5.
+
+Program Change: Enables transmission of a program change message when the voice is changed. If the voice does not have a program number set, no message will be sent. Make sure that the MIDI channel matches the channel of the Prophet-5.
+
+Disk Device #: Sets the device number of the drive used for saving and loading sysex data.
+
+Sequencer Steps: See Sequencer (p. 18) for information about these settings.
+
+Generation: See Voice Generation (p. 20) for information about these settings.
+Edit Screens
+
+Press F1, F3, F5, or F7 to display an Edit Screen
+
+The Prophet-5 voice parameters are arranged on four edit screens. See Basic Navigation (p. 7) for information about selecting and changing parameters.
+
+F1 (Oscillators): Contains the parameters for the two oscillators. This page also contains the voice name. To edit the voice name, select the field and press RETURN. A cursor will appear at the end of the name. You may edit the name, and then press RETURN.
+
+F3 (Filter and Amplifier): Contains the parameters for the filter and the amplifier, including the two envelope generators. Make sure that your Prophet-5's operating system is up-to-date to access the Q Comp parameter!
+
+F5 (Modulation): Contains the parameters for modulation, including Poly-Mod, LFO, and Wheel-Mod.
+
+F7 (Unison and Other): Contains the parameters that don't fall into the other categories, including unison settings, velocity and aftertouch routing.
+
+Undo
+ Press Commodore+Z to undo the last edit in the current voice
+
+Ed remembers the last 100 edits (except edits to voice name). Undo reverses the most recent change to the current voice and places the cursor on the changed parameter. To undo a change in another voice, switch to that voice.System Exclusive (Sysex) Data
+ 
+Ed for Prophet-5 provides several ways to exchange voice data with your instrument.
+
+Send from Your Prophet-5 to Ed
+
+Ed will accept sysex dumps from the Prophet-5 on any screen. When voice data is received, it will start loading data at the current library voice, and advance to the next voice for each subsequent voice message.
+
+Ed has space for 64 voices, so you can dump a Program, Bank, or Group from the Prophet-5.
+
+Note: Sysex data exchange does not observe the MIDI channel.
+
+Note: Sysex data will not be received during sequence recording.
+
+Request a Program from Your Prophet-5
+
+Press Q to request a program 
+from the Prophet-5
+
+Choose the program number in the popup window and press RETURN. If the request message is received, the Prophet-5 will respond by sending sysex for a single program.
+
+The request will only be sent if the current voice is not assigned to a Prophet-5 program number.
+Send from Ed to Your Prophet-5
+
+Press V to send one or more voices 
+to the Prophet-5
+
+For a program, the popup window allows four choices. For a voice without a program number assigned, the only option is to send the edit buffer.
+
+Program (P): Sends sysex for the selected program. This will overwrite the associated program on the Prophet-5.
+
+Edit (E): Sends sysex for the current voice as a voice edit buffer dump. This will not overwrite the program in the Prophet-5's memory, but will allow you to continue editing the voice on the instrument.
+
+Bank (B): Sends sysex for all programs in the library that share the selected program's bank and group numbers. This will overwrite the associated programs on the Prophet-5.
+
+Group (G): Sends sysex for all programs in the library that share the selected program's group number. This will overwrite the associated programs on the Prophet-5.
+
+Send Factory Programs
+
+Press Commodore+V to send Factory programs 
+This works exactly as above, but will overwrite Factory programs instead of User programs.Disk Operations
+
+Ed for Prophet-5 can save and load sysex data to a 1541 or compatible drive, including SD2IEC. Select your drive's device number on the Setup Screen (see p. 8).
+
+Save Library
+
+Press S to save the library
+
+In the popup window, you may enter a filename of up to eight characters. The .SYX extension will automatically be added to this filename. This is a standard sysex file that can be used in any other editor/librarian that accepts .SYX files.
+
+All 64 voices will be saved, regardless of whether they have program numbers assigned.
+
+Note: If you use another editor/librarian to send these files to the Prophet-5, the instrument will not accept voices without program numbers assigned.
+
+Save Marked Voices
+
+Press Commodore+S to save marked voices
+
+To mark a specific voice to be saved, press the * key (asterisk). The S indicator will appear in the status bar. When you save with Commodore+S, only the marked voices will be saved.  Hold down Commodore+* to clear all save marks.
+Load Library
+
+Press L to load the library
+Press Commodore+L to load starting at the current voice
+
+In the popup window, you may enter a filename of up to eight characters. The .SYX extension will automatically be added to this filename. You may load files created by any editor/librarian that saves .SYX files, although you may need to rename the file.
+
+If the file is found on the disk, Ed will load the file. It will load to the library starting at voice 01.
+
+If you hold the left-arrow key during the load, the load will stop.
+
+Tip: If you want to load the library starting at the current voice instead of voice 01, press Commodore+L.Managing Voices
+
+Ed for Prophet-5 has several ways to manage voices in the library, to make it easier to build the banks that you want to use.
+
+Copy Voice
+
+Press C to copy the current voice
+
+The popup window will ask for the number of the destination library voice. Note that this operation will overwrite the destination voice in the library!
+
+The program number of the destination voice (if set) will not be changed.
+
+Swap Voices
+
+Press Commodore+C to swap the current voice 
+with another voice
+
+The popup window will ask for the number of the other voice in the library. This operation will swap the parameter data of the current voice and the other voice.
+
+The program numbers of both voices will remain in their original library locations. For example, if you swap voice 01 (program 111) and voice 02 (program 222), voice 01 will remain program 111 and voice 02 will remain program 222, even though the data has been swapped.
+Change Program Number
+
+Press P to change the program
+number of a voice
+
+The popup window will ask for a program number, comprised of a group (1-5), a bank (1-5), and a sound number (1-8). Edit or enter a program number, and press RETURN to change the voice's program number.
+
+To unset a program number for a voice, delete the entire program number in the popup window and press RETURN.
+
+Change Group
+
+Press Commodore+P to change the group 
+number for all programs that share a 
+group with the current voice
+
+The popup window will ask for a group number (1-5). When you enter a group number and press RETURN, Ed will change the group number to the specified group for every voice that shares a group with the current voice.
+
+This operation is useful for re-positioning third-party sounds into the group of your choice.
+Erase a Voice
+
+Press CLR to erase the current voice
+
+The popup window will ask for confirmation. Press Y to confirm erasure. Anything else will cancel the operation. This will set all parameters in the voice to 0, turn off all switches, and set all voice names to "INIT".
+
+Reset Ed for Prophet-5
+
+Press Commodore+CONTROL+RESTORE 
+to reset Ed
+
+This operation will erase all 64 voices in the library, reset the options on the Setup Screen, and reset the sequencer, as though the VIC-20 has been power-cycled.
+
+Library View
+
+Press Commodore+Function Key to 
+display the Library View
+
+Library View shows a high-level overview of your library's organization, sixteen voices at a time.
+
+Commodore+F1: Voices 1-16
+Commodore+F3: Voices 17-32
+Commodore+F5: Voices 33-48
+Commodore+F7: Voices 49-64
+
+Each line shows the voice number, the program number (or ---), and the voice name or partial voice name. If the voice is marked to be saved (p. 13), a reverse S will appear next to the voice number.
+
+Browsing the Library View with the CRSR keys changes the current voice. Press RETURN to select the indicated voice and go to the first edit screen.
+
+
+Hex View
+
+Press X to display the Hex View
+
+Hex View shows the voice dump sysex message in hexadecimal format for the current voice.
+
+If the voice does not have a program number assigned, the group and program bytes in the message header are replaced with ??.
+Sequencer
+
+Ed for Prophet-5 has a single voice step sequencer with up to 64 steps, which can be used to audition sounds during editing away from the keyboard.
+
+Ed starts with a simple default 8-step sequence in memory. To try it out, press the RUN key.
+
+The sequencer step display is in the upper-right corner, showing the step number, note number (or rest), and transport mode (play/record).
+
+Recording and Editing
+
+Press Commodore+RUN to start recording Press STOP to stop recording
+
+While in Record Mode, you may do the following things:
+
+Add a Note: Play a note on your Prophet-5. The step display will show the note number and the associated step. Ed will also record the velocity at which the keyboard was played.
+
+Add a Rest: Press the R key to add a rest. The step display will advance to the next step.
+
+Delete the Last Note: Press the DEL key to delete the last note or rest recorded.
+
+Clear the Sequence: Press Commodore+DEL to clear the sequence and return to step 01.
+Playback
+
+Press RUN/STOP to start or stop playback
+
+Playback will start at step 01, and will play recorded notes and velocities.
+
+Playback will be performed at the tempo set on the Setup Screen.
+
+The sequencer will reset back to step 01 when it reaches the last recorded note, or the step specified on the Setup Screen, whichever occurs first.
+
+Note messages will be sent on the MIDI channel specified on the Setup Screen.
+Voice Generation
+
+Press G to generate a voice
+
+Ed for Prophet-5 is capable of generating interesting voices that are genetic hybrids of existing voices. A voice can be generated when the current voice does not have a Prophet-5 program number assigned to it.
+
+The voice is generated as follows: For each parameter, randomly select a value for that parameter from one of the Seed Voices specified on the Setup Screen.
+
+Then, for a number of times specified in the Mutations setting (also on the Setup Screen), randomize one value parameter.
+
+When a voice is generated in this way, Ed automatically sends an edit buffer sysex message to your Prophet-5, so that you can audition the generated sound right away. This does not overwrite the program in the Prophet-5.
+
