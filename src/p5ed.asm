@@ -1289,35 +1289,32 @@ req_r2:     jmp MainSwitch
 ; If undo level > 0, then get last NRPN and set it to its last value           
 Undo:       bit COMMODORE       ; Undo works only with COMMODORE down
             bpl undo_r          ; ,,
-            ldy UNDO_LEV        ; At least one level must be available
+            ldx #SM_UNDONE      ; Show status message, which might be later
+            jsr Status          ;   enhanced with the undo level number
+            ldy UNDO_LEV        ; Start looking at this undo level
             beq undo_r          ; ,,
-            lda UNDO_VCE,y      ; Get the voice number for the level
-            cmp CVOICE_IX       ;   Is it the current voice?
-            beq undo_this       ;   If so, just perform the undo
-            pha                 ; Changing voice, so stash new voice number
-            lda UNDO_FIX,y      ; Convert field number to page
-            tay                 ; ,,
-            ldx FPage,y         ; ,,
-            sta LAST_LIB_IX,x   ; ,,
-            jsr PackVoice       ; Pack the previous voice (is this necessary??)
-            pla                 ; Select the new voice
-            tay                 ; ,,
-            sty CVOICE_IX       ; ,, Set current voice
-            jsr SelLib          ; ,,
-            ldy UNDO_LEV        ; ,,
-undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
+-loop:      lda UNDO_VCE,y      ; What voice is this level for?
+            cmp CVOICE_IX       ; Is it for the current one?
+            beq undo_this       ; If so, an undo level was found 
+            dey                 ; If not, try the next level
+            bpl loop            ; ,,
+            bmi undo_r          ; Do nothing if no undo for this voice
+undo_this:  cpy UNDO_LEV        ; If this is not the last entry,
+            bne no_dec          ;   do not decrement, but set the voice
+            dec UNDO_LEV        ;   index to $ff. If it is the last entry, DEC
+no_dec:     sty IX              ; Store undo index for later display
+            lda #$ff            ; Mark as $ff to indicate the level was used
+            sta UNDO_VCE,y      ; ,,
+            lda UNDO_FIX,y      ; Get the field index for the level
             pha                 ; ,, (store the field index)
             tax                 ; ,, (store in X)
             lda FNRPN,x         ; Get the NRPN for this field
             tax                 ;   into X
             lda UNDO_VAL,y      ; Get the value for the level
             sta CVOICE,x        ; Restore the program value
-            dec UNDO_LEV        ; Go to the next level
             lda #$ff            ; Reset the last field index number
             sta LAST_FIX        ; ,,
             jsr NRPNpost        ; Transmit NRPN CCs, if enabled (passing X)
-            ldx #SM_UNDONE      ; Show undo message
-            jsr Status          ; ,,
             pla                 ; Draw the field. Get the field index back.
             tay                 ; ,,
             ldx FPage,y         ; Get the page number for the undone field
@@ -1326,9 +1323,9 @@ undo_this:  lda UNDO_FIX,y      ; Get the field index for the level
             beq pop_only        ;   fields
             stx PAGE            ; ,,
             jsr SwitchPage      ; ,,
-pop_only:   jsr ClrCursor
+pop_only:   jsr ClrCursor 
             jsr PopFields       ; ,,
-            ldy UNDO_LEV        ; Show the level number
+            ldy IX              ; Show the undo level number in the display
             jsr TwoDigNum       ; ,,
             stx STATUSDISP+18   ; ,,
             sta STATUSDISP+19   ; ,,
@@ -2861,7 +2858,7 @@ Copied:     .asc "    COPIED",0
 Saving:     .asc "    SAVING",0
 Loading:    .asc "LOADING 00",0
 Success:    .asc "   SUCCESS",0
-Undone:     .asc "   UNDO 00",0
+Undone:     .asc "   UNDO --",0
 Erased:     .asc "    ERASED",0
 Swapped:    .asc "   SWAPPED",0
 NoGroup:    .asc "  NO GROUP",0
