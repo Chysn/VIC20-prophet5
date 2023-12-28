@@ -154,7 +154,7 @@ SW_OFF      = $57               ; Switch off screen code
 CURSOR      = $5a               ; Cursor screen code PETSCII
 TL          = $a3               ; Top line PETSCII
 BL          = $d2               ; Bottom line PETSCII
-TXTCURSOR   = $6f               ; Text edit cursor
+TXTCURSOR   = $66               ; Text edit cursor
 P_TL        = 213               ; POPUP WINDOW - top left
 P_T         = 195               ;                top
 P_B         = 198               ;                bottom
@@ -529,7 +529,7 @@ inc_bypass: jsr PrepField       ; Get field value
             bcc id_r
             cmp TRangeH,y
             bcs id_r            ; Already at maximum, so do nothing
-            jsr NRPNpre         ; Pre-change (Undo)
+            jsr SetUndo         ; Pre-change (Undo)
             inc CVOICE,x
 nrpn_msg:   lda PAGE            ; If < and > are pressed on the
             cmp #4              ;   Library View, do nothing
@@ -570,7 +570,7 @@ dec_bypass: jsr PrepField       ; Get field value
             bcc id_r
             cmp TRangeL,y
             beq id_r            ; Already at minimum, so do nothing
-            jsr NRPNpre         ; Pre-change (Undo)
+            jsr SetUndo         ; Pre-change (Undo)
             dec CVOICE,x
             jmp nrpn_msg
 
@@ -587,8 +587,8 @@ EditName:   ldy FIELD_IX        ; Check the field's type for this edit
             beq sel_prog        ; ,,
             tya                 ; Save Y for after undo level
             pha                 ; ,,
-            ldx FNRPN,y         ; Pass NRPN number to NRPNpre to set undo
-            jsr NRPNpre         ;   ,,
+            ldx FNRPN,y         ; Pass NRPN number to SetUndo to set undo
+            jsr SetUndo         ;   ,,
             pla                 ;   ,,
             tay                 ;   ,,
             ldx FNRPN,y         ; Anything else will advance to its max
@@ -2272,9 +2272,9 @@ Rand127:    lda #%00000010      ; 7-bit
             lda RANDOM
             rts
 
-; Pre NRPN Change
+; Set Undo
 ; Manage undo levels    
-NRPNpre:    txa 
+SetUndo:    txa 
             pha
             ldy CVOICE_IX       ; Y = current voice index
             ldx FIELD_IX        ; X = current field index
@@ -2282,7 +2282,7 @@ NRPNpre:    txa
             bne diff_f          ;   and on the same voice number,
             cpy LAST_VCE        ;   do nothing
             beq pre_r
-diff_f:     cpx #$90            ; If this is one of the settings parameters
+diff_f:     cpx TopParamIX+4    ; If this is one of the settings parameters
             bcs pre_r           ;   for Ed, do not create an Undo level
             stx LAST_FIX        ; Store the last field index
             sty LAST_VCE        ; Store the last voice
