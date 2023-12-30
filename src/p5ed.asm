@@ -95,6 +95,7 @@ DEVICE_NUM  = CVOICE+$a3        ; Storage Device number
 SEED1_PRG   = CVOICE+$a4        ; Generator Seed 1
 SEED2_PRG   = CVOICE+$a5        ; Generator Seed 2
 MUTATE      = CVOICE+$a6        ; Mutate flag
+VELOCITY    = CVOICE+$a7        ; Playback velocity
 MIDINOTE    = CVOICE+$a8        ; Assigned MIDI notes
 
 ; Application Data Storage
@@ -320,6 +321,8 @@ lib_ok:     dec IX
             sta DEVICE_NUM      ;     ,,
             lda #2              ;   * Generator seed 2
             sta SEED2_PRG       ;     ,,
+            lda #100            ;   * Velocity
+            sta VELOCITY        ;     ,,
             jsr ResetField      ; Reset page-specific field selections
             
             ; Initialize scale
@@ -387,7 +390,7 @@ ch_scale:   jsr unshift         ; Not a command, check for 1-8
             lda MIDINOTE-1,y    ; Get note from MIDI table
             tax                 ; Set X for note on message
             stx LAST_NOTE       ; ,,
-            ldy #100            ; Set Y for velocity
+            ldy VELOCITY        ; Set Y for velocity
             lda MIDI_CH         ; Set MIDI channel
             jsr SETCH           ; ,,
             jsr NOTEON          ; Send note on message
@@ -1263,10 +1266,17 @@ no_dec:     sty IX              ; Store undo index for later display
             jsr SwitchPage      ; ,,
 pop_only:   jsr ClrCursor 
             jsr PopFields       ; ,,
-            ldy IX              ; Show the undo level number in the display
-            jsr TwoDigNum       ; ,,
-            stx STATUSDISP+18   ; ,,
-            sta STATUSDISP+19   ; ,,
+            ldy #0              ; Count the number of undo levels for this voice
+            ldx UNDO_LEV        ; ,,
+-loop:      lda UNDO_VCE,x      ; ,,
+            cmp CVOICE_IX       ; ,,
+            bne diff_vce        ; ,,
+            iny                 ; ,, Increment undo count for this voice
+diff_vce:   dex                 ; ,,
+            bpl loop            ; ,,
+            jsr TwoDigNum       ; Show how many undo levels remain for this
+            stx STATUSDISP+18   ;   voice
+            sta STATUSDISP+19   ;   ,,
 undo_r:     jmp MainLoop
 
 ; Mark Voice for Save
@@ -2770,7 +2780,7 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     32,     48,     66,    82,       83,     98
+TopParamIX: .byte 0,      17,     32,     48,     66,    82,       83,     99
 
 ; Field data
 ; Field page number (0-3)
@@ -2781,7 +2791,7 @@ FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 3,3,3,3,3 ; Prophet-10
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
             .byte 5
-            .byte 6,6,6,6,6,6,6,6,6,6,6,6,6,6,6
+            .byte 6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6
             .byte 7
 LFIELD:     .byte $80 ; Delimiter, and LFIELD - FPage = field count
 
@@ -2793,7 +2803,7 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 15,16,17,18,19 ; Prophet-10
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
-            .byte 5,6,7,8,11,12,13,16,16,17,17,18,18,19,19
+            .byte 5,6,7,8,11,12,13,16,17,17,17,18,18,18,19,19
             .byte 1
 
 ; Field column
@@ -2804,7 +2814,7 @@ FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14 ; Prophet-10
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 1
-            .byte 14,14,14,14,14,14,14,3,11,3,11,3,11,3,11
+            .byte 14,14,14,14,14,14,14,14,2,8,14,2,8,14,2,8
             .byte 1
 
 ; Field type
@@ -2831,6 +2841,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_HEX
 
             .byte F_MIDICH,F_SWITCH,F_SWITCH,F_DEVICE,F_64,F_64,F_MUTATIONS
+            .byte F_VALUE
             .byte F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE
             
             .byte F_NONE
@@ -2848,7 +2859,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte $ff,$ff,$ff,$ff,$ff,$ff,$ff,$ff ; ,,
             .byte $ff
             .byte $a0,$a1,$a2,$a3,$a4,$a5,$a6
-            .byte $a8,$a9,$aa,$ab,$ac,$ad,$ae,$af
+            .byte $a7,$a8,$a9,$aa,$ab,$ac,$ad,$ae,$af
             .byte $ff
 
 ; Edit Page Fields
@@ -2943,10 +2954,15 @@ Setup:      .asc 30,CR,"   ED FOR PROPHET-5",CR
             .asc RT,"SEED VOICE",CR
             .asc RT,"MUTATIONS",CR
             .asc CR,"CUSTOM SCALE",CR
-            .asc RT,RVON,"1",RVOF," ",RT,RT,RT,"   ",RVON,"2",RVOF,CR
-            .asc RT,RVON,"3",RVOF," ",RT,RT,RT,"   ",RVON,"4",RVOF,CR
-            .asc RT,RVON,"5",RVOF," ",RT,RT,RT,"   ",RVON,"6",RVOF,CR
-            .asc RT,RVON,"7",RVOF," ",RT,RT,RT,"   ",RVON,"8",RVOF,CR
+            .asc RT,"VELOCITY",CR
+            .asc RT,RVON,"1",RVOF,RT,RT,RT,RT
+            .asc RT,RVON,"2",RVOF,RT,RT,RT,RT
+            .asc RT,RVON,"3",RVOF,RT,RT,RT,RT,CR
+            .asc RT,RVON,"4",RVOF,RT,RT,RT,RT
+            .asc RT,RVON,"5",RVOF,RT,RT,RT,RT
+            .asc RT,RVON,"6",RVOF,RT,RT,RT,RT,CR
+            .asc RT,RVON,"7",RVOF,RT,RT,RT,RT
+            .asc RT,RVON,"8",RVOF,RT,RT,RT,RT
             .asc 00
             
 Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
