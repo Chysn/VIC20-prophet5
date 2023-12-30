@@ -736,7 +736,8 @@ no_mutate:  jsr BufferSend      ; Send the edit buffer
             jsr Status          ; ,,
             ldy CVOICE_IX       ; Clear undo info for a generated voice
             jsr ClrUndo         ; ,,
-            jmp MainSwitch
+            jsr PopFields
+            jmp MainLoop
              
 ; Set Program Number
 ; for current voice                   
