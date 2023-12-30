@@ -40,11 +40,8 @@ Vectors:    .word Start         ; Start
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-FPS         = 120               ; IRQs per second
-PROCSP      = 1020000           ; Processor speed in cycles per second
-IRQ_C       = PROCSP / FPS      ; IRQ countdown value
+; 
 UNDOS       = 101               ; Number of undo levels + 1
-SEQS        = 64                ; Number of sequencer steps
 
 ; Application Memory
 ; In addition, zero page usage by
@@ -228,6 +225,7 @@ F_QCOMP     = 17                ; Q Compensation
 F_BTMODE    = 18                ; Bi-Timbral Mode
 F_NOTE      = 19                ; Note Number
 F_PROGRAM   = 20                ; Program Number
+F_BANK      = 21                ; Bank Number
 
 ; System Resources
 CINV        = $0314             ; ISR vector
@@ -268,8 +266,6 @@ Start:      jsr $fd8d           ; Test RAM, initialize VIC chip
             jsr $fd52           ; Restore default I/O vectors
             jsr $fdf9           ; Initialize I/O registers
             jsr $e518           ; Initialize hardware
-            ;lda #$19            ; Set string descriptor pointer, to avoid            
-            ;sta $16             ;   conflicts with zero page addresses
 
             ; Some hardware settings
 Reset:      sei                 ; Disable interrupt; re-enabled at end of Start
@@ -1049,12 +1045,12 @@ GoSave:     jsr PackVoice
             jsr Popup
             lda #<SaveLabel
             ldy #>SaveLabel
-            jsr PrintStr
-            bit COMMODORE       ; If the Commodore key was held, show reverse
-            bpl prompt          ;   S to indicate selected voices will be
-            lda #$93            ;   saved
-            sta SCREEN+214      ;   ,,
-prompt:     jsr SetName         ; Get user name input
+            bit COMMODORE       ; If the Commodore key was held, show the
+            bpl prompt          ;   Save Marked popup
+            lda #<SaveLabel2    ;   ,,
+            ldy #>SaveLabel2    ;   ,,
+prompt:     jsr PrintStr
+            jsr SetName         ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
 start_save: lda #0              ; Turn off KERNAL messages
@@ -2469,10 +2465,16 @@ Num:        tay
             iny
 one_dig:    pla
             sta (FIELD),y
-            iny
+            ldx FIELD_IX        ; Does this field type have a range > 10?
+            lda FType,x         ; ,,
+            tax                 ; ,,
+            lda TRangeH,x       ; ,,
+            cmp #10             ; ,,
+            bcc num_r           ; ,, If so, put a space after the value
+            iny                 ; ,, to clear out an unused tens place
             lda #" "
             sta (FIELD),y
-            rts
+num_r:      rts
             
 ; Draw Note Number
 ; This leverages Freq, below, but represents the actual MIDI note number
@@ -2722,18 +2724,18 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 0=Value Bar, 1=Voice Line, 2=Switch, 3=Tracking, 4=Detune, 5=Wheel, 6=Filter
 ; 7=Name, 8=Unison Voice Count, 9=Retrigger, 10=Frequency
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
-; 17=Q Comp, 18=Bi-Timbral Mode, 19=Note Number, 20=Program Number
+; 17=Q Comp, 18=Bi-Timbral Mode, 19=Note Number, 20=Program Number, 21=Bank
 TSubL:      .byte <ValBar-1,<VoiceLine-1,<Switch-1,<Enum-1
             .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Num1Ind-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1
-            .byte <QComp-1,<Enum-1,<NoteNum-1,<Program-1
+            .byte <QComp-1,<Enum-1,<NoteNum-1,<Program-1,<Num1Ind-1
 TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
             .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Num1Ind-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1
-            .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1
-TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39
-TColor:     .byte 8,  0,  1,4,2, 2,3,0,  2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3
+            .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>Num1Ind-1
+TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0,0
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,4
+TColor:     .byte 8,  0,  1,4,2, 2,3,0,  2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
 
 ; Enum NRPN, integer values, and enum text locations
 EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,89,89,89,89
@@ -2759,7 +2761,7 @@ LAS:        .asc "LAS",0        ; ,,
 LAR:        .asc "LAR",0        ; ,,
 HI:         .asc "HI ",0        ; ,,
 HIR:        .asc "HIR",0        ; ,,
-P5:         .asc "P-5",0        ; Bi-Timbral modes
+P5:         .asc "---",0        ; Bi-Timbral modes
 NOR:        .asc "NOR",0        ; ,,
 STC:        .asc "STC",0        ; ,,
 SPL:        .asc "SPL",0        ; ,,
@@ -2780,7 +2782,7 @@ Init:       .asc "INIT",0
 ; Edit Page Data
 EditL:      .byte <Edit0, <Edit1, <Edit2, <Edit3, <View, <HexView, <Setup, <Help
 EditH:      .byte >Edit0, >Edit1, >Edit2, >Edit3, >View, >HexView, >Setup, >Help
-TopParamIX: .byte 0,      17,     32,     48,     66,    82,       83,     99
+TopParamIX: .byte 0,      17,     32,     48,     67,    83,       84,     100
 
 ; Field data
 ; Field page number (0-3)
@@ -2788,7 +2790,7 @@ FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
             .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
-            .byte 3,3,3,3,3 ; Prophet-10
+            .byte 3,3,3,3,3,3 ; Prophet-10
             .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
             .byte 5
             .byte 6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6
@@ -2800,7 +2802,7 @@ FRow:       .byte 0,3,3,4,5,6,9,9,9,10,11,12,13,14,17,18,19
             .byte 1,2,3,4,5,6,7,8,9,10,13,14,15,16,17
             .byte 1,2,3,4,5,8,9,10,10,10,13,14,15,16,17,18
             .byte 0,1,2,3,6,7,8,9,10,11,12,13,14
-            .byte 15,16,17,18,19 ; Prophet-10
+            .byte 15,16,16,17,18,19 ; Prophet-10
             .byte 4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19
             .byte 3
             .byte 5,6,7,8,11,12,13,16,17,17,17,18,18,18,19,19
@@ -2811,7 +2813,7 @@ FCol:       .byte 1,3,8,14,14,14,3,8,12,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,3,8,12,14,14,14,14,14,14
             .byte 14,14,14,14,14,14,14,14,14,14,14,14,14
-            .byte 14,14,14,14,14 ; Prophet-10
+            .byte 14,14,15,14,14,14 ; Prophet-10
             .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
             .byte 1
             .byte 14,14,14,14,14,14,14,14,2,8,14,2,8,14,2,8
@@ -2833,7 +2835,7 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
             .byte F_WHEEL,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_VALUE,F_SWITCH,F_SWITCH
-            .byte F_BTMODE,F_PROGRAM,F_NOTE,F_VALUE,F_VALUE ; P10 parameters
+            .byte F_BTMODE,F_BANK,F_PROGRAM,F_NOTE,F_VALUE,F_VALUE ; P10 parameters
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
@@ -2851,7 +2853,7 @@ FNRPN:      .byte 88,3,4,0,8,10,5,6,7,1,2,9,11,12,14,15,16
             .byte 17,18,40,19,20,85,43,45,47,49,44,46,48,50,51
             .byte 32,33,34,35,36,22,21,23,24,25,26,27,28,29,30,31
             .byte 52,87,53,54,13,37,86,97,41,42,98,38,39
-            .byte 89,91,95,88,96 ; P10 parameters
+            .byte 89,90,91,95,88,96 ; P10 parameters
 
             ; The following are not really NRPN numbers, but use the CVOICE
             ; storage for menu settings
@@ -2929,12 +2931,12 @@ Edit3:      .asc 30,CR,"UNISON",CR
             .asc RT,"VINTAGE",CR
             .asc RT,"WHEEL RANGE",CR
             .asc RT,"VELOCITY",CR
-            .asc RT," FILTER",CR
-            .asc RT," AMPLIFIER",CR
+            .asc RT," FILT",CR
+            .asc RT," AMP",CR
             .asc RT,"AFTERTOUCH",CR
-            .asc RT," FILTER",CR
+            .asc RT," FILT",CR
             .asc RT," LFO",CR
-            .asc RT,"P-10 MODE",CR
+            .asc RT,"PROPHET-10",CR
             .asc RT," LAYER B",CR
             .asc RT," SPLIT POINT",CR
             .asc RT," VOLUME A",CR
@@ -2973,7 +2975,6 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," <  > ",30," EDIT VALUE",CR
             .asc 5," ",RVON,"C=",RVOF,"Z  ",30," UNDO",CR
             .asc 5," -  + ",30," SELECT VOICE",CR
-            .asc 5," 1-8  ",30," PLAY NOTE",CR
             .asc 5," CLR  ",30," ERASE VOICE",CR
             .asc 5," P    ",30," PRG# ",5,RVON,"C=",RVOF,30,"GROUP#",CR
             .asc 5," C    ",30," COPY ",5,RVON,"C=",RVOF,30,"SWAP",CR
@@ -2982,8 +2983,9 @@ Help:       .asc CR,158," WWW.BEIGEMAZE.COM/ED",CR,CR
             .asc 5," G    ",30," GENERATE VOICE",CR
             .asc 5," L    ",30," LOAD ",5,RVON,"C=",RVOF,30,"AT CURR",CR
             .asc 5," S    ",30," SAVE ",5,RVON,"C=",RVOF,30,"MARKED",CR
-            .asc 5," *    ",30," MARK ",5,RVON,"C=",RVOF,30,"CLEAR",CR
+            .asc 5," *    ",30," MARK FOR SAVE",CR
             .asc 5," X    ",30," HEX VIEW",CR
+            .asc 5," 1-8  ",30," PLAY NOTE",CR
             .asc 00
             
 View:       .asc 30,CR,"     LIBRARY VIEW",CR
@@ -3018,6 +3020,7 @@ GrpLabel:   .asc 5,"CHANGE",CR
             .asc RT,RT,RT,RT,RT,"GROUP #",RT," TO",30,0
 ReqLabel:   .asc 5,"REQUEST #",30,0
 SaveLabel:  .asc 5,"SAVE",30,0
+SaveLabel2: .asc 5,"SAVE MARKED",30,0
 LoadLabel:  .asc 5,"LOAD",30,0
 SendMenu:   .asc 5,"SEND VOICE",CR
             .asc RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROGRAM"," ",RVON,"E",RVOF,"DIT",CR
