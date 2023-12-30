@@ -734,6 +734,8 @@ mutate:     jsr Rand31          ; Get five-bit pseudorandom number
 no_mutate:  jsr BufferSend      ; Send the edit buffer            
             ldx #SM_GEN         ; Write status message when done
             jsr Status          ; ,,
+            ldy CVOICE_IX       ; Clear undo info for a generated voice
+            jsr ClrUndo         ; ,,
             jmp MainSwitch
              
 ; Set Program Number
