@@ -168,7 +168,6 @@ PARCOL      = 3                 ; Parameter color (cyan)
 SELCOL      = 7                 ; Selected field color (yellow)
 STACOL      = 2                 ; Status line color (red)
 LIBCOL      = 5                 ; Library display color (green)
-SEQCOL      = 1                 ; Sequencer transport color (white)
 STATUSDISP  = SCREEN+484        ; Status line starting location
 WINDOW_ED   = SCREEN+247        ; Window editor location
 PROGRESSBAR = SCREEN+227        ; Progress bar location
@@ -1664,7 +1663,7 @@ pi:         lda #$5E
 ; And color appropriately
 ClrScr:     ldx #230            ; Clear the entire screen, except for the
 -loop:      lda #" "            ;   bottom 2 rows, which are used for status,
-            sta SCREEN+22,x     ;   and the top row, used for the sequencer.
+            sta SCREEN+22,x     ;   and the top row.
             sta SCREEN+231,x    ;   ,,
             lda #PARCOL         ;   ,, (for parameters)
             sta COLOR,x         ;   ,,
@@ -2778,10 +2777,6 @@ SPL:        .asc "SPL",0        ; ,,
 ; Commodore-S
 NoteName:   .asc   3,  3,  4,  4,  5,  6,  6,  7,  7,  1,  1,  2
 Accidental: .asc ' ','#',' ','#',' ',' ','#',' ','#',' ','#',' '
-
-
-; Transport Annunciators for Sequencer
-XportAnn:   .asc $20, $51, $3e
 
 ; Initialized Program
 Init:       .asc "INIT",0
