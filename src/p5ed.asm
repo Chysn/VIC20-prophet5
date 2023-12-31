@@ -360,7 +360,7 @@ waitkey:    ldx READY           ; If Sysex is ready, handle it
 keydown:    tay                 ; Preserve key pressed
             ldx #0              ; Look through Key Code table for a valid
 -loop:      lda KeyCode,x       ;   command key press
-            beq ch_scale        ;   ,, 0 delimits command list
+            beq PlayScale       ;   ,, 0 delimits command list
             cmp KEY
             beq cmd_addr
             inx
@@ -376,7 +376,10 @@ cmd_addr:   lda CommandH,x      ; Set dispatch address on the stack
             sec                 ; Perform swap if Commodore is pressed
             ror COMMODORE       ; ,,            
 dispatch:   rts                 ; Dispatch command with key in A
-ch_scale:   jsr unshift         ; Not a command, check for 1-8
+
+; Play Custom Scale
+PlayScale:  sty ANYWHERE        ; Store the pressed key code
+            jsr unshift         ; Not a command, check for 1-8
             cmp #"1"            ; ,,
             bcc MainLoop        ; ,,
             cmp #"8"+1          ; ,,
@@ -390,13 +393,14 @@ ch_scale:   jsr unshift         ; Not a command, check for 1-8
             lda MIDI_CH         ; Set MIDI channel
             jsr SETCH           ; ,,
             jsr NOTEON          ; Send note on message
-            lda #$40            ; Wait for key to be released
--loop:      cmp KEY             ; ,,
-            bne loop            ; ,,
+            ldy ANYWHERE        ; Wait until this key is no longer down
+-loop:      cpy KEY             ; ,,
+            beq loop            ; ,,
             ldx LAST_NOTE       ; Note number
             ldy #0              ; Release velocity 0
             jsr NOTEOFF         ; Turn note off
-            jmp MainLoop        ; And continue
+            ldy KEY             ; Jump back to check scale, to allow
+            jmp PlayScale       ;   legato playing
 
 ; Handle Incoming SysEx
 SysexReady: lda #0              ; Clear the sysex ready flag
