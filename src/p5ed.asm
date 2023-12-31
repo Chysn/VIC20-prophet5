@@ -186,7 +186,7 @@ BACKSP      = 7                 ; Backspace
 NEXTLIB     = 5                 ; +
 PREVLIB     = 61                ; -
 OPENSETUP   = 32                ; Space
-CANCEL      = 8                 ; Back Arrow
+CANCEL      = 24                ; STOP
 OPENHELP    = 43                ; H
 GENERATE    = 19                ; G
 SETPRG      = 13                ; P
@@ -194,7 +194,6 @@ CLEAR       = 62                ; CLR
 VOICESEND   = 27                ; V
 COPY        = 34                ; C
 REST        = 10                ; R
-RUN         = 8                 ; RUN/STOP
 DSAVE       = 41                ; S 
 DLOAD       = 21                ; L
 PRGREQ      = 48                ; Q
@@ -635,18 +634,19 @@ getkey:     jsr Keypress        ; Get key code in Y, PETSCII in A
             beq backsp          ; ,,
             cpy #EDIT           ; Has return been pressed?
             beq entername       ; ,,
+            cpy #CANCEL         ; Has STOP been pressed?
+            beq entername       ; ,,
             cmp #" "            ; Constrain values for character
             bcc getkey          ; ,,
             cmp #"Z"+1          ; ,,
             bcs getkey          ; ,,
             ldy IX              ; Put this character into the NRPN buffer
-            sta CVOICE+65,y     ; ,,
+            cpy #20             ;   ,, (if it's less than 20)
+            bcs pos_cur         ;   ,,
+            sta CVOICE+65,y     ;   ,,
             jsr PETtoScr        ; Convert to screen code for display
             ldy IX              ; ,,
             sta (FIELD),y       ; ,,
-            cpy #18             ; If at maximum size, do not advance cursor
-            bcc pos_cur         ; ,,
-            inc IX              ; Advance the cursor
             jmp pos_cur         ; ,,
 backsp:     ldy IX              ; Backspace
             lda #" "            ; Clear the old cursor
@@ -1056,7 +1056,7 @@ GoSave:     jsr PackVoice
             lda #<SaveLabel2    ;   ,,
             ldy #>SaveLabel2    ;   ,,
 prompt:     jsr PrintStr
-            jsr SetName         ; Get user name input
+            jsr FileName        ; Get user name input
             bcc start_save      ; If OK, start save
             jmp disk_canc       ; Cancel, so return
 start_save: lda #0              ; Turn off KERNAL messages
@@ -1117,8 +1117,14 @@ GoLoad:     jsr CLALL
             lda #<LoadLabel
             ldy #>LoadLabel
             jsr PrintStr
-            jsr SourceVce  
-            jsr SetName         ; Get name from user
+            bit COMMODORE       ; If this is the Commodore mode,
+            bpl loadlib         ;   add letters so that it reads
+            lda #20             ;   LOAD TO
+            sta SCREEN+208      ;   ,,
+            lda #15             ;   ,,
+            sta SCREEN+209      ;   ,,
+loadlib:    jsr SourceVce  
+            jsr FileName        ; Get name from user
             bcc start_load
             jmp disk_canc
 start_load: lda #0              ; Turn off KERNAL messages
@@ -1308,7 +1314,7 @@ clearmarks: lda #0              ; If Commodore was held down, clear all
 ; Filename Field
 ; If canceled, return with carry set
 ; If OK, return with carry clear and call SETNAM
-SetName:    lda #"."            ; Add file extension .P5
+FileName:   lda #"."            ; Add file extension .P5
             sta WINDOW_ED+8     ; ,,
             lda #19             ; ,, (S)
             sta WINDOW_ED+9     ; ,,
@@ -1326,12 +1332,16 @@ fgetkey:    jsr Keypress        ; Keycode in Y, PETSCII in A
             sec 
             rts
 fch_bk:     cpy #BACKSP         ; Has backspace been pressed?
-            beq fbacksp          ; ,,
+            beq fbacksp         ; ,,
             cpy #EDIT           ; Has return been pressed?
             beq fdone           ; ,,
-            cmp #"0"            ; Constrain values for character
+            cmp #"*"            ; * is not allowed
+            beq fgetkey         ; ,,
+            cmp #"/"            ; / is now allowed
+            beq fgetkey         ; ,,
+            cmp #" "            ; Constrain values for character
             bcc fgetkey         ; ,,
-            cmp #"Z"+1          ; ,,
+            cmp #$60            ; ,,
             bcs fgetkey         ; ,,
             ldy IX              ; ,,
             cpy #8              ; Limit size of filename
@@ -1627,7 +1637,7 @@ WriteText:  sta PTRD
             jsr PETtoScr
             sta (FIELD),y
             iny
-            cpy #20             ; Max size, for the NAME field
+            cpy #21             ; Max size, for the NAME field
             bcc loop
 wr_r:       rts
             
@@ -3004,7 +3014,7 @@ Window:     .asc 5 ; White
             .asc CR,CR,CR,CR,CR,CR
             .asc RT,RT,RT,RT
             .asc P_TL,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_TR,CR
-            .asc RT,RT,RT,RT,P_L,$5f,"     CANCEL",P_R,CR
+            .asc RT,RT,RT,RT,P_L,"ED FOR P5  ",28,$d6,5,P_R,CR
             .asc RT,RT,RT,RT
             .asc P_L,30,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,5,P_R,CR
             .asc RT,RT,RT,RT,P_L,"            ",P_R,CR
