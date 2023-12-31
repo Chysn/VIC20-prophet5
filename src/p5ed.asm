@@ -1337,14 +1337,14 @@ fch_bk:     cpy #BACKSP         ; Has backspace been pressed?
             beq fdone           ; ,,
             cmp #"@"            ; Disallow @
             beq fgetkey         ; ,,
-            ldx #EOA-Allow      ; For each allowed character
--loop:      cmp Allow,x         ;   If it's this, then accept it
-            beq char_ok         ;   ,,
+            ldx #EOD-Disallow   ; For each disallowed character
+-loop:      cmp Disallow,x      ;   If it's this, then reject it
+            beq fgetkey         ;   ,,
             dex                 ;   ,,
             bpl loop            ;   ,,
-            cmp #"0"            ; Constrain values for character
+            cmp #" "            ; Constrain values for character
             bcc fgetkey         ; ,,
-            cmp #"Z"+1          ; ,,
+            cmp #$60            ; ,,
             bcs fgetkey         ; ,,
 char_ok:    ldy IX              ; ,,
             cpy #8              ; Limit size of filename
@@ -2710,9 +2710,9 @@ SyxExt:     .asc ".SYX,P,W"
 ; Value Bar Partials
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 
-; Allowed Characters in Filenames
-Allow:      .asc " !%'()+-.;[]",$5e
-EOA:        ; End of allowed
+; Disllowed Characters in Filenames
+Disallow:   .asc $22,"#$",$2a,",/:<=>?@",$5c
+EOD:        ; End of disallowed
 
 ; Library Divisions
 ; Start voice index for each Library View page
