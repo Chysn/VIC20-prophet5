@@ -1335,15 +1335,18 @@ fch_bk:     cpy #BACKSP         ; Has backspace been pressed?
             beq fbacksp         ; ,,
             cpy #EDIT           ; Has return been pressed?
             beq fdone           ; ,,
-            cmp #"*"            ; * is not allowed
+            cmp #"@"            ; Disallow @
             beq fgetkey         ; ,,
-            cmp #"/"            ; / is now allowed
-            beq fgetkey         ; ,,
-            cmp #" "            ; Constrain values for character
+            ldx #EOA-Allow      ; For each allowed character
+-loop:      cmp Allow,x         ;   If it's this, then accept it
+            beq char_ok         ;   ,,
+            dex                 ;   ,,
+            bpl loop            ;   ,,
+            cmp #"0"            ; Constrain values for character
             bcc fgetkey         ; ,,
-            cmp #$60            ; ,,
+            cmp #"Z"+1          ; ,,
             bcs fgetkey         ; ,,
-            ldy IX              ; ,,
+char_ok:    ldy IX              ; ,,
             cpy #8              ; Limit size of filename
             bcs fgetkey         ; ,,
             sta TEMPNAME,y      ; Store PETSCII in name storage
@@ -2707,6 +2710,10 @@ SyxExt:     .asc ".SYX,P,W"
 ; Value Bar Partials
 BarPartial: .byte $e7, $ea, $f6, $61, $75, $74, $65, $20
 
+; Allowed Characters in Filenames
+Allow:      .asc " !%'()+-.;[]",$5e
+EOA:        ; End of allowed
+
 ; Library Divisions
 ; Start voice index for each Library View page
 LibDiv:     .byte 0,16,32,48
@@ -3069,7 +3076,7 @@ LibraryH:   .byte $14,$14,$15,$15,$16,$17,$17,$18
             .byte $2d,$2d,$2e,$2e,$2f,$30,$30,$31
             .byte $32,$32,$33,$33,$34,$35,$35,$36
             .byte $37,$37,$38,$38,$39,$3a,$3a,$3b
-
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBMODULES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;     
