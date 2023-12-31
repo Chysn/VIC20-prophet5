@@ -3014,7 +3014,7 @@ Window:     .asc 5 ; White
             .asc CR,CR,CR,CR,CR,CR
             .asc RT,RT,RT,RT
             .asc P_TL,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_TR,CR
-            .asc RT,RT,RT,RT,P_L,"ED FOR P5  ",28,$d6,5,P_R,CR
+            .asc RT,RT,RT,RT,P_L,"ED FOR P5  ",30,RVON,$d6,RVOF,5,P_R,CR
             .asc RT,RT,RT,RT
             .asc P_L,30,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,5,P_R,CR
             .asc RT,RT,RT,RT,P_L,"            ",P_R,CR
