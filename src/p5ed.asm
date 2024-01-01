@@ -1128,7 +1128,7 @@ loadlib:    jsr SourceVce
             jmp disk_canc
 start_load: lda #0              ; Turn off KERNAL messages
             sta MSGFLG          ; ,,
-            sta BREAK           ; Clear BREAk flag
+            sta BREAK           ; Clear BREAK flag
             tya                 ; Length of name for SETNAM call
             sec                 ; Subtract the ",P,W" from the filename
             sbc #4              ; ,,
@@ -1954,14 +1954,17 @@ DumpBank:   clc                 ; Clear DUMPTYPE flag to indicate bank dump
             cmp S_BANK          ; Does it match the bank?
             bne d_nomatch       ; ,,
 d_match:    jsr DumpVoice       ; If it does, dump the voice
-d_nomatch:  inc IX              ; Move to the next voice
+d_nomatch:  lda KEY             ; If STOP is held at this point, exit
+            cmp #CANCEL         ; ,,
+            beq dumpbank_r      ; ,,
+            inc IX              ; Move to the next voice
             lda IX              ; Draw the value bar based on index
             asl                 ;   ,, (twice the index, actually)
             jsr ProgPopup       ;   ,,
             ldy IX              ; Check the search index for the end
             cpy #LIB_TOP        ; ,,
             bne loop
-            jmp MainSwitch
+dumpbank_r: jmp MainSwitch
             
 ; Dump a Voice
 ; Set PTR before the call with VoicePtr or Validate            
