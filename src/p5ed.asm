@@ -2600,11 +2600,12 @@ is_marked:  lda #$93            ; ,,
             sta (FIELD),y       ; ,,
             ldy #4              ; Get group number to check for factory prog
             lda (PTR),y         ; ,,
+            bmi not_fact        ; ,, Not factory if $80
             cmp #5              ; ,, If group >= 5, then it's a factory
-            bcs is_fact         ; ,, program
-            lda #" "            ; ,,
+            bcc not_fact        ; ,, program
+            lda #$86            ; ,,
             .byte $3c           ; ,, Skip word (SKW)
-is_fact:    lda #$86            ; ,, Reverse F after program number
+not_fact:   lda #" "            ; ,, Reverse F after program number
             ldy #6              ; ,, Set Y to 5 and ut the factory indicator
             sta (FIELD),y       ; ,,   or space on the screen
             lda PTR
