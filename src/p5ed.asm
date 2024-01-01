@@ -68,8 +68,7 @@ DUMPTYPE    = $1d               ; Bit 7 set = Group, clear = Bank
 DEST10      = $1e               ; Tens digit of copy destination
 DEST1       = $1f               ; Ones digit of copy destination
 NRPN_NUM    = $20               ; NRPN for NRPN MIDI messages
-;SEQ_PLAY_IX = $21               ; Sequence play note index
-;SEQ_COUNT   = $22               ; Sequence note countdown
+BREAK       = $21               ; STOP has been pressed during Load
 LAST_NOTE   = $23               ; Last note played
 RANDOM      = $24               ; Random number for mutation
 DRAW_IX     = $25               ; Drawn field index
@@ -183,8 +182,8 @@ INCR        = 37                ; >
 DECR        = 29                ; <
 EDIT        = 15                ; Edit parameter
 BACKSP      = 7                 ; Backspace
-NEXTLIB     = 5                 ; +
-PREVLIB     = 61                ; -
+NEXTVCE     = 5                 ; +
+PREVVCE     = 61                ; -
 OPENSETUP   = 32                ; Space
 CANCEL      = 24                ; STOP
 OPENHELP    = 43                ; H
@@ -423,8 +422,8 @@ SysexFail:  lda #$80            ; This has failed, so make it an unset program,
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; COMMANDS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; Previous Library Entry
-PrevLib:    jsr PackVoice
+; Previous Voice
+PrevVoice:  jsr PackVoice
             lda #1              ; Default value to substract, one
             sta IX              ; ,,
             ldy SHIFT           ; If shift is held, decrement by 10 instead
@@ -480,8 +479,8 @@ lvf_r:      ldy PAGE            ; Keep track of the index for the current
             sta LAST_LIB_IX,y   ;   ,,
 pf_r:       jmp MainLoop
 
-; Next Library Entry
-NextLib:    jsr PackVoice
+; Next Voice
+NextVoice:  jsr PackVoice
             lda #1              ; Default value to add, one
             sta IX              ; ,,
             ldy SHIFT           ; If shift is held, increment by 10 instead
@@ -495,7 +494,7 @@ nl_def:     lda CVOICE_IX       ; Add the specified number to the
             bcc nl_set          ; ,,
             lda #LIB_TOP-1      ; ,,
 nl_set:     sta CVOICE_IX       ; Store the new index
-            jmp switchlib       ; Swith library from PrevLib
+            jmp switchlib       ; Swith library from PrevVoice
                       
 ; Move Cursor to Next Field
 NextField:  ldy FIELD_IX
@@ -1129,6 +1128,7 @@ loadlib:    jsr SourceVce
             jmp disk_canc
 start_load: lda #0              ; Turn off KERNAL messages
             sta MSGFLG          ; ,,
+            sta BREAK           ; Clear BREAk flag
             tya                 ; Length of name for SETNAM call
             sec                 ; Subtract the ",P,W" from the filename
             sbc #4              ; ,,
@@ -1154,7 +1154,12 @@ load_cur:   sty DISKLIB_IX      ; ,,
 -next_rec:  ldy DISKLIB_IX      ; Get next voice pointer
             jsr VoicePtr        ; ,,
             ldy #0              ; Index within current message
-get_byte:   jsr READST
+get_byte:   lda KEY             ; If CANCEL key is pressed, set BREAK flag
+            cmp #CANCEL         ; ,,
+            bne no_break        ; ,,
+            sec                 ; ,,
+            ror BREAK           ; ,,
+no_break:   jsr READST
             bne eof
             jsr CHRIN           ; Get next byte
             cmp #ST_SYSEX       ; Is it start of sysex?
@@ -1180,11 +1185,10 @@ eorec:      ldy DISKLIB_IX      ; Is the incomcing sysex message an actual
             stx STATUSDISP+18   ;   ,,
             sta STATUSDISP+19   ;   ,,
             lda DISKLIB_IX      ; Show progress bar
-            asl                 ; ,, Multiple progress by 2
+            asl                 ; ,, Multiply progress by 2
             jsr ProgPopup       ; ,,
-            lda KEY             ; If CANCEL key is held, end load
-            cmp #CANCEL         ; ,,
-            beq load_good       ; ,,
+            bit BREAK           ; Is the BREAK flag set?
+            bmi load_good       ; ,, If so, end the load
             inc DISKLIB_IX      ; Increment the disk library index.
             lda #LIB_TOP        ;   If it's reached the library top,
             cmp DISKLIB_IX      ;   then act as though we're EOF 
@@ -2727,18 +2731,18 @@ Mutable:    .byte 2,8,9,14,15,17,18,21,26,32,33,37,40,43,44,45,46,47,48,49,50
 
 ; Key command subtroutine addresses
 KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
-            .byte PREVLIB,NEXTLIB,OPENSETUP,OPENHELP,GENERATE,SETPRG
+            .byte PREVVCE,NEXTVCE,OPENSETUP,OPENHELP,GENERATE,SETPRG
             .byte VOICESEND,CLEAR,COPY,DSAVE,DLOAD
             .byte PRGREQ,UNDO,HEX,MARK,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
-            .byte <EditName-1,<PrevLib-1,<NextLib-1
+            .byte <EditName-1,<PrevVoice-1,<NextVoice-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<GoSend-1
             .byte <GoErase-1,<GoCopy-1,<GoSave-1,<GoLoad-1,<Request-1
             .byte <Undo-1,<GoHex-1,<Mark-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
-            .byte >EditName-1,>PrevLib-1,>NextLib-1
+            .byte >EditName-1,>PrevVoice-1,>NextVoice-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>GoSend-1
             .byte >GoErase-1,>GoCopy-1,>GoSave-1,>GoLoad-1,>Request-1
             .byte >Undo-1,>GoHex-1,>Mark-1
@@ -3076,7 +3080,8 @@ LibraryH:   .byte $14,$14,$15,$15,$16,$17,$17,$18
             .byte $2d,$2d,$2e,$2e,$2f,$30,$30,$31
             .byte $32,$32,$33,$33,$34,$35,$35,$36
             .byte $37,$37,$38,$38,$39,$3a,$3a,$3b
-            
+DATAEND:    ; End of data tables
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBMODULES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;     
