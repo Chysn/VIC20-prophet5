@@ -2579,7 +2579,7 @@ pl_ok:      ldy VIEW_IX         ; Add the two-digit program number first
             dey                 ; ,,
             txa                 ; ,,
             sta (FIELD),y       ; ,,
-            ldx VIEW_IX         ; Get the Prophet 5 program number
+            ldx VIEW_IX         ; Get the Prophet 5 voice number
             lda MARKED,x        ; ,, (if marked for save, show the reverse
             bne is_marked       ; ,, S after the voice number)
             lda #" "            ; ,, 
@@ -2598,6 +2598,15 @@ is_marked:  lda #$93            ; ,,
             iny                 ; ,,
             lda TEMPNAME+2      ; ,,
             sta (FIELD),y       ; ,,
+            ldy #4              ; Get group number to check for factory prog
+            lda (PTR),y         ; ,,
+            cmp #5              ; ,, If group >= 5, then it's a factory
+            bcs is_fact         ; ,, program
+            lda #" "            ; ,,
+            .byte $3c           ; ,, Skip word (SKW)
+is_fact:    lda #$86            ; ,, Reverse F after program number
+            ldy #6              ; ,, Set Y to 5 and ut the factory indicator
+            sta (FIELD),y       ; ,,   or space on the screen
             lda PTR
             sta P_START
             sta P_END
