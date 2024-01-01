@@ -637,7 +637,7 @@ getkey:     jsr Keypress        ; Get key code in Y, PETSCII in A
             beq entername       ; ,,
             cmp #" "            ; Constrain values for character
             bcc getkey          ; ,,
-            cmp #"Z"+1          ; ,,
+            cmp #$60            ; ,,
             bcs getkey          ; ,,
             ldy IX              ; Put this character into the NRPN buffer
             cpy #20             ;   ,, (if it's less than 20)
@@ -1658,6 +1658,10 @@ PETtoScr:   cmp #123            ; Make the Name field case-insensitive
             sbc #$20            ;   ,, 
 ch_pet:     cmp #$ff            ; Is pi, which is an odd duck
             beq pi              ; ,,
+            cmp #$5c            ; Change GBP to backslash
+            beq backsl          ; ,,
+            cmp #$5f            ; Change left arrow to underscore
+            beq undersc         ; ,,
             cmp #$c0
             bcs b_c0
             cmp #$a0
@@ -1673,7 +1677,11 @@ pet_r:      rts
 b_a0:       sbc #$40
 b_c0:       and #$7f
             rts
-pi:         lda #$5E
+pi:         lda #$5e            ; Screen code for pi
+            .byte $3c           ; (SKW)
+backsl:     lda #$4d            ; Screen code for backslash
+            .byte $3c           ; (SKW)
+undersc:    lda #$52            ; Screen code for underscore
             rts   
             
 ; Clear Screen
