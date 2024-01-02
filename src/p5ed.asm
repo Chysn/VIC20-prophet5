@@ -316,14 +316,16 @@ lib_ok:     dec IX
             sta SEED2_PRG       ;     ,,
             lda #100            ;   * Velocity
             sta VELOCITY        ;     ,,
-            jsr ResetField      ; Reset page-specific field selections
-            
-            ; Initialize scale
-            ldy #7
--loop:      lda DefScale,y
-            sta MIDINOTE,y
-            dey
-            bpl loop
+                                    
+            ; Initialize scale and last library indices for each page
+            ldy #7              ; Eight pages, eight notes. Coincidence??
+-loop:      lda DefScale,y      ; ,, Copy the scale table
+            sta MIDINOTE,y      ; ,, ,,
+            lda TopParamIX,y    ; ,, Copy the last library index
+            sta LAST_LIB_IX,y   ; ,, ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
+            inc LAST_LIB_IX     ;   ,, Page 0 is +1 because of the name field
                                     
             ; Initialize user interface
             ldy CVOICE_IX       ; Select first voice
@@ -2208,16 +2210,6 @@ NewVoice:   ldy #$9f
             lda #$80            ; For a new voice, set the program
             ldy #4              ;   number to unset
             sta (PTR),y         ;   ,,
-            ; Fall through to Reset Field
-
-; Reset Fields
-; Sets the last field index of each page back to default
-ResetField: ldy #7              ; Set last library indexes for each page
--loop:      lda TopParamIX,y    ;   ,,
-            sta LAST_LIB_IX,y   ;   ,,
-            dey                 ;   ,,
-            bpl loop            ;   ,,
-            inc LAST_LIB_IX     ;   ,, Page 0 is +1 because of the name                     
             rts
        
 ; Pseudo-Random
