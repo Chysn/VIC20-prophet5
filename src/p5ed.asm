@@ -1644,7 +1644,7 @@ WriteText:  sta PTRD
             jsr PETtoScr
             sta (FIELD),y
             iny
-            cpy #21             ; Max size, for the NAME field
+            cpy #20             ; Max size, for the NAME field
             bcc loop
 wr_r:       rts
             
