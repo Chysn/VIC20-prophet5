@@ -147,7 +147,7 @@ SW_OFF      = $57               ; Switch off screen code
 CURSOR      = $5a               ; Cursor screen code PETSCII
 TL          = $a3               ; Top line PETSCII
 BL          = $d2               ; Bottom line PETSCII
-TXTCURSOR   = $66               ; Text edit cursor
+TXTCURSOR   = $6f               ; Text edit cursor
 P_TL        = 213               ; POPUP WINDOW - top left
 P_T         = 195               ;                top
 P_B         = 198               ;                bottom
@@ -287,7 +287,7 @@ lib_ok:     dec IX
             bpl loop
             
             ; Set Interupts
-            lda #<IRQ           ; Set IRQ key scanning
+            lda #<IRQ           ; Set IRQ, key scan only
             sta CINV            ; ,,
             lda #>IRQ           ; ,,
             sta CINV+1          ; ,,
@@ -625,8 +625,7 @@ sel_prog:   tya                 ; Field index
             lda #0              ; Drill down to edit page
             sta PAGE            ; ,,
             jmp MainSwitch
-edit_name:  jsr ClrCursor       ; Clear cursor during name edit
-            jsr FieldLoc        ; Get actual starting position of Name field
+edit_name:  jsr FieldLoc        ; Get actual starting position of Name field
 pos_cur:    jsr find_end        ; Set IX to the character after the last one
             lda #TXTCURSOR      ; Show a cursor in that place
             sta (FIELD),y       ; ,,
@@ -1244,8 +1243,8 @@ req_r2:     jmp MainSwitch
 ; If undo level > 0, then get last NRPN and set it to its last value           
 Undo:       bit COMMODORE       ; Undo works only with COMMODORE down
             bpl undo_r          ; ,,
-            ldx #SM_UNDONE      ; Show status message, which might be later
-            jsr Status          ;   enhanced with the undo level number
+            ldx #SM_UNDONE      ; Show status message, onto which the number of
+            jsr Status          ;   remaining levels will be added below
             ldy UNDO_LEV        ; Start looking at this undo level
             beq undo_r          ; ,,
 -loop:      lda UNDO_VCE,y      ; What voice is this level for?
@@ -1580,7 +1579,8 @@ field_col:  sta ANYWHERE        ; A is the color. Stash it...
 -loop:      sta (FIELD),y
             dey 
             bpl loop
-clr_cur_r:  rts
+clr_cur_r:  ldy #0
+            rts
             
             
 ; Draw Field
@@ -2776,7 +2776,7 @@ TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
             .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>Num1Ind-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0,0
 TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,4
-TColor:     .byte 8, 20,  1,4,2, 2,3,0,  2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
+TColor:     .byte 8, 20,  1,4,2, 2,3,21,  2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
 
 ; Enum NRPN, integer values, and enum text locations
 EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,89,89,89,89
