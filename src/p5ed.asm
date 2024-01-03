@@ -1282,6 +1282,7 @@ pop_only:   jsr ClrCursor
             jsr PopFields       ; ,,
             ldy #0              ; Count the number of undo levels for this voice
             ldx UNDO_LEV        ; ,,
+            beq undo_r          ; ,, If no levels, show dashes
 -loop:      lda UNDO_VCE,x      ; ,,
             cmp CVOICE_IX       ; ,,
             bne diff_vce        ; ,,
@@ -2265,7 +2266,7 @@ diff_f:     cpx TopParamIX+4    ; If this is one of the settings parameters
             stx LAST_FIX        ; Store the last field index
             sty LAST_VCE        ; Store the last voice
             ldy UNDO_LEV        ; If there are undo levels remaining,
-            cpy #UNDOS-1        ; ,,
+            cpy #UNDOS          ; ,,
             bcc save_lev        ; ,, save a new level
             ldy #1              ; If the level is at max, then move
 -loop:      lda UNDO_FIX,y      ;   the current levels down one,
