@@ -1287,7 +1287,7 @@ pop_only:   jsr ClrCursor
             bne diff_vce        ; ,,
             iny                 ; ,, Increment undo count for this voice
 diff_vce:   dex                 ; ,,
-            bpl loop            ; ,,
+            bne loop            ; ,, (end at 0, because 0 isn't used)
             jsr TwoDigNum       ; Show how many undo levels remain for this
             stx STATUSDISP+18   ;   voice
             sta STATUSDISP+19   ;   ,,
