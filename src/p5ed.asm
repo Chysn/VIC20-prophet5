@@ -998,6 +998,7 @@ cdone:      ldx IX              ; If the number isn't finished, go back for
             bne loop            ;   ,,
             cld                 ;   ,,
             dey                 ; Re-zero-index the voice number
+            jsr ClrUndo         ; Clear undo levels for the target voice
             jsr VoicePtr        ; Set PTR to this voice
             ldy #$9e            ; Copy the selected voice into the temporary
 -loop:      lda (PTR),y         ;   buffer for swap. Yeah, this is done whether
