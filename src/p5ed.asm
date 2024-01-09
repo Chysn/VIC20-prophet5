@@ -329,7 +329,7 @@ lib_ok:     dec IX
                                     
             ; Initialize user interface
             ldy CVOICE_IX       ; Select first voice
-            jsr SelLib          ; ,,
+            jsr SelVoice        ; ,,
             ldx #SM_WELCOME     ; Show welcome message in status bar
             jsr Status          ; ,,
             cli                 ; Start Interrupt
@@ -414,12 +414,9 @@ SysexReady: lda #0              ; Clear the sysex ready flag
             jsr UnpBuff         ;   ,,
             jsr PopFields       ;   ,,            
 lib_end:    jmp MainLoop
-SysexFail:  lda #$80            ; This has failed, so make it an unset program,
-            ldy #4              ;   so that it's not accidentally seen as
-            sta (PTR),y         ;   an actual program by some routines/
-            ldx #SM_FAIL
-            jsr Status
-            jmp MainLoop
+SysexFail:  ldx #SM_FAIL        ; Show fail status message. A future Validate/
+            jsr Status          ;   NewVoice should initialize this voice, 
+            jmp MainLoop        ;   probably during SelVoice.
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; COMMANDS
@@ -442,7 +439,7 @@ pl_def:     lda CVOICE_IX       ; Subtract the specified number from the
 switchlib:  jsr ClrCursor
             ldy CVOICE_IX       ; Set the target voice to be the newly-
             sty TVOICE_IX       ;   selected voice, so new sysex starts here
-            jsr SelLib          ; Select library and show the fields for the
+            jsr SelVoice        ; Select library and show the fields for the
             jsr PopFields       ;   current page
             ldx #SM_BLANK       ; Blank the status when a new voice is chosen
             jsr Status          ; ,,
@@ -459,6 +456,7 @@ PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
             ldy FIELD_IX
             dey
 ch_f:       sty FIELD_IX        ; Endpoint for changing the field
+            beq edit_name       ; If this is the name field, edit it
             jsr DrawCursor
             lda PAGE            ; Are we on the Library View?
             cmp #4              ; ,,
@@ -473,13 +471,14 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             sta CVOICE_IX       ; ...Equals the new current program index
             sta TVOICE_IX       ; ...and the target program index
             tay                 ; Select this voice
-            jsr SelLib          ; ,,
+            jsr SelVoice        ; ,,
             ldy CVOICE_IX       ; Show program number
             jsr PopFields       ; ,,
 lvf_r:      ldy PAGE            ; Keep track of the index for the current
             lda FIELD_IX        ;   page
             sta LAST_LIB_IX,y   ;   ,,
 pf_r:       jmp MainLoop
+edit_name:  jmp EditName
 
 ; Next Voice
 NextVoice:  jsr PackVoice
@@ -586,10 +585,8 @@ DecValue:   jsr PrepField       ; Get field value
 ; * Edits Name
 ; * Selects Programs in Library
 ; * Advances Others
-EditName:   ldy FIELD_IX        ; Check the field's type for this edit     
+Advance:    ldy FIELD_IX        ; Check the field's type for this edit     
             lda FType,y         ;   behavior.
-            cmp #F_NAME         ; If it's a name, it will be edited
-            beq edit_name       ; ,,
             cmp #F_PRG          ; If it's a program, it will be selected
             beq sel_prog        ; ,,
             tya                 ; Save Y for after undo level
@@ -621,20 +618,22 @@ sel_prog:   tya                 ; Field index
             sbc TopParamIX+4    ;   minus first page parameter...
             sta CVOICE_IX       ; ...Equals the new current program index
             tay                 ; Select this voice
-            jsr SelLib          ; ,,
+            jsr SelVoice        ; ,,
             lda #0              ; Drill down to edit page
             sta PAGE            ; ,,
             jmp MainSwitch
-edit_name:  jsr FieldLoc        ; Get actual starting position of Name field
+            
+EditName:   jsr DrawCursor      ; Draw name cursor
+            jsr FieldLoc        ; Get actual starting position of Name field
 pos_cur:    jsr find_end        ; Set IX to the character after the last one
             lda #TXTCURSOR      ; Show a cursor in that place
             sta (FIELD),y       ; ,,
 getkey:     jsr Keypress        ; Get key code in Y, PETSCII in A
             cpy #BACKSP         ; Has backspace been pressed?
             beq backsp          ; ,,
-            cpy #EDIT           ; Has return been pressed?
+            cpy #NEXT           ; Has next field been selected?
             beq entername       ; ,,
-            cpy #CANCEL         ; Has STOP been pressed?
+            cpy #EDIT           ; Has RETURN been pressed?
             beq entername       ; ,,
             cmp #" "            ; Constrain values for character
             bcc getkey          ; ,,
@@ -660,6 +659,8 @@ backsp:     ldy IX              ; Backspace
 entername:  jsr find_end        ; RETURN has been pressed, so remove the cursor
             lda #" "            ; ,,
             sta (FIELD),y       ; ,,
+            jsr ClrCursor       ; Clear old cursor
+            inc FIELD_IX        ; Advance to next field
             jsr DrawCursor      ; Replace removed field-level cursor
             jmp MainLoop        ; And go back to Main
 find_end:   ldy #0              ; Starting NRPN index of Name
@@ -1236,8 +1237,6 @@ req_c:      jsr Popup
             lda #ST_ENDSYSEX    ; Add the end-of-sysex message
             sta TEMPBUFF+6      ; ,,
             jsr SendSysex       ; Send the request message
-            ldx #SM_SENT        ; Show status and await dump from Prophet 5
-req_s:      jsr Status          ; ,,
 req_r2:     jmp MainSwitch      
          
 ; Undo
@@ -1282,14 +1281,14 @@ pop_only:   jsr ClrCursor
             jsr PopFields       ; ,,
             ldy #0              ; Count the number of undo levels for this voice
             ldx UNDO_LEV        ; ,,
-            beq undo_r          ; ,, If no levels, show dashes
+            beq show_levs       ; ,, If no levels, show dashes
 -loop:      lda UNDO_VCE,x      ; ,,
             cmp CVOICE_IX       ; ,,
             bne diff_vce        ; ,,
             iny                 ; ,, Increment undo count for this voice
 diff_vce:   dex                 ; ,,
             bne loop            ; ,, (end at 0, because 0 isn't used)
-            jsr TwoDigNum       ; Show how many undo levels remain for this
+show_levs:  jsr TwoDigNum       ; Show how many undo levels remain for this
             stx STATUSDISP+18   ;   voice
             sta STATUSDISP+19   ;   ,,
 undo_r:     jmp MainLoop
@@ -1806,10 +1805,7 @@ unset:      lda #"-"
 ; Once set up
 ;   LDA value
 ;   JSR ProgPopup
-ProgPopup:  ldx #$3a            ; Put indicators at beginning and end
-            stx PROGRESSBAR-1   ; ,,
-            stx PROGRESSBAR+8   ; ,,
-            ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
+ProgPopup:  ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
             stx FIELD           ;   VarBar
             ldx #>PROGRESSBAR   ;   ,,
             stx FIELD+1         ;   ,
@@ -2002,31 +1998,25 @@ dv_ok:      ldx #SM_SENT        ; Success!
 ; Send Edit Buffer
 ; From the current program        
 BufferSend: jsr PackVoice       ; Pack prior to sending so it's correct
-            lda #<EditBuffer
-            ldy #>EditBuffer
-            jsr SysexMsg
-            lda PTR
-            sta P_RESULT
-            lda PTR+1
-            sta P_RESULT+1
-            lda #<CVOICE
-            sta P_START
-            clc
-            adc #$88
-            sta P_END
-            lda #>CVOICE
-            sta P_START+1
-            sta P_END+1
-            jsr Pack
-            lda #ST_ENDSYSEX
-            sta TEMPBUFF+$9c
-            jsr SendSysex
-            bcc bsend_ok
-            ldx #SM_FAIL 
-            .byte $3c           ; Skip word (SKW)
-bsend_ok:   ldx #SM_SENT
-            jsr Status
-bsend_r:    rts
+            lda #<EditBuffer    ; Construct an edit buffer dump with the
+            ldy #>EditBuffer    ;   documented header
+            jsr SysexMsg        ;   ,,
+            lda PTR             ; Set up addresses for packing the voice data
+            sta P_RESULT        ;   into the TEMPBUFF (whose address is set in
+            lda PTR+1           ;   PTR by SysexMsg a few lines up).
+            sta P_RESULT+1      ;   ,,
+            lda #<CVOICE        ;   Start at the current voice
+            sta P_START         ;   ,,
+            clc                 ;   Add 136 to start to get the end offset. This
+            adc #136            ;   is a bit larger than the parameter data, but
+            sta P_END           ;   it's necessary to get to the end. Extra size
+            lda #>CVOICE        ;   doesn't matter because we're adding #$7F
+            sta P_START+1       ;   explicitly at the end, to end the sysex.
+            sta P_END+1         ;   ,,
+            jsr Pack            ; Perform the packing operation into TEMPBUFF
+            lda #ST_ENDSYSEX    ; Then add #$7F
+            sta TEMPBUFF+$9c    ; ,,
+            jmp SendSysex       ; Send the whole TEMPBUFF and show status
             
 ; Unpack to Buffer
 ; Using current PTR
@@ -2066,9 +2056,7 @@ PackVoice:  ldy CVOICE_IX
             sta (PTR),y         ;   $80, which indicates that no group is
             dey                 ;   set.
             bpl loop            ;   ,,
-            lda #$80            ;   ,,
-            ldy #4              ;   ,,
-            sta (PTR),y         ;   ,,
+            jsr UnsetProg       ;   ,, Unset the program number in sysex
             lda #$00            ;   ,,
             iny                 ;   ,,
             sta (PTR),y         ;   ,,
@@ -2096,45 +2084,43 @@ hdr_ok:     lda PTR
             rts
                         
 ; Construct Sysex Message
+; from a documented sysex header
 ; from A=low/Y=high to TEMPBUFF
 ; PTR points to the next byte in the sysex output stage
 SysexMsg:   sta PTR
             sty PTR+1
-            ldy #$ff
--loop:      iny
-            lda (PTR),y
-            cmp #$ff
-            beq msg_done
-            sta TEMPBUFF,y
+            ldy #0
+-loop:      lda (PTR),y
+            beq msg_done        ; Messages in the table are delimited by 00
+            sta TEMPBUFF,y      ; Store the message in TEMPBUFF
+            iny
             bne loop
-msg_done:   tya
-            clc
-            adc #<TEMPBUFF
-            sta PTR
-            lda #>TEMPBUFF
-            sta PTR+1
+msg_done:   tya                 ; Update PTR so that the caller can continue
+            clc                 ;   with the message
+            adc #<TEMPBUFF      ;   ,,
+            sta PTR             ;   ,,
+            lda #>TEMPBUFF      ;   ,,
+            sta PTR+1           ;   ,,
 sm_r:       rts
             
 ; Send Sysex
-; Returns with carry set if error
-SendSysex:  ldy #0
--loop:      lda TEMPBUFF,y
-            jsr MIDIOUT
-            bcs send_err
-            cmp #ST_ENDSYSEX
-            beq send_r
-            iny
-            bne loop
-send_err:   ldx #SM_FAIL
-            jsr Status
-            sec 
-            rts
-send_r:     clc
-            rts
+; Then show status message depending on result
+SendSysex:  ldy #0              ; Send a byte at a time from TEMPBUFF
+-loop:      lda TEMPBUFF,y      ; ,,
+            jsr MIDIOUT         ; ,,
+            bcs send_fail       ; ,, Error out if timeout
+            cmp #ST_ENDSYSEX    ; Until end of sysex
+            beq send_ok         ; ,,
+            iny                 ; ,,
+            bne loop            ; ,, (Fail if overread, but that would be a bug)
+send_fail:  ldx #SM_FAIL        ; Set message type
+            .byte $3c           ; ,, Skip word (SKW)
+send_ok:    ldx #SM_SENT        ; ,,
+            jmp Status          ;  
        
-; Select Library
+; Select Voice
 ; Unpack specified library index (in Y) to the current voice buffer
-SelLib:     jsr Validate
+SelVoice:   jsr Validate
             beq lib_good
             jsr NewVoice
 lib_good:   jsr UnpBuff
@@ -2171,36 +2157,36 @@ VoicePtr:   lda LibraryL,y      ; In case of soft reset, advance library
             rts
 
 ; Validate Library
-; Check sysex for Program Dump message, and #$7f in the right place
+; Check sysex for Program Dump message, and #$7F in the right place
 ; Library index in Y
-; Valid if zero flag is set
-Validate:   jsr VoicePtr
-            ldy #3
--loop:      lda (PTR),y
-            cmp PrgDump,y
-            bne invalid 
-            dey
-            bpl loop
-            ldy #$9e
-            lda (PTR),y 
-            cmp #ST_ENDSYSEX
-invalid:    rts
+; Valid if zero flag is set, as in BEQ is_good
+Validate:   jsr VoicePtr        ; Set the voice pointer
+            ldy #3              ; Compare the data at the pointer to the
+-loop:      lda (PTR),y         ;   documented program dump message
+            cmp PrgDump,y       ;   ,,
+            bne invalid         ;   ,, and bail if a byte doesn't match
+            dey                 ;   ,,
+            bpl loop            ;   ,,
+            ldy #$9e            ; If the header is okay, also make sure that the
+            lda (PTR),y         ;   data has $7F at offset $9E, which is where
+            cmp #ST_ENDSYSEX    ;   the Prophet-5 voice message ends.
+invalid:    rts                 ; Result of last compare is in Z
 
 ; New Voice
 ; With data pointer already in PTR
-NewVoice:   ldy #$9f
-            lda #0
--loop:      sta (PTR),y
-            dey
-            cpy #$ff
-            bne loop
-            ldx #$ff
-            ldy #$50            ; Location of name in sysex
--loop:      inx                 ; Set name as INIT
+NewVoice:   ldy #0              ; Zero out 159 bytes
+            lda #0              ; ,,
+-loop:      sta (PTR),y         ; ,,
+            iny                 ; ,,
+            cpy #$a0            ; ,,
+            bne loop            ; ,,
+            ldx #$ff            ; X is the table for the INIT name
+            ldy #$50            ; Y is the offset of name in sysex
+-loop:      inx                 ; Set name from the table
             iny                 ; ,,
             lda Init,x          ; ,,
             sta (PTR),y         ; ,,
-            bne loop            ; ,,
+            bne loop            ; ,, Name is delimited by 0
             ldy #3              ; Create the sysex header for a valid program
 -loop:      lda PrgDump,y       ; ,,
             sta (PTR),y         ; ,,
@@ -2209,13 +2195,13 @@ NewVoice:   ldy #$9f
             ldy #$9e            ; ,,
             lda #ST_ENDSYSEX    ; Create the end-of-sysex delimiter
             sta (PTR),y         ; ,,
-            lda #$80            ; For a new voice, set the program
-            ldy #4              ;   number to unset
+UnsetProg:  lda #$80            ; For a new voice, set the program
+            ldy #4              ;   number to unset with b7
             sta (PTR),y         ;   ,,
             rts
        
 ; Pseudo-Random
-; One bit            
+; One bit of "random," returned in carry         
 PRand:      lsr P_RAND
             ror P_RAND+1
             bcc rnd_r
@@ -2494,9 +2480,9 @@ Num:        tay
 one_dig:    pla
             sta (FIELD),y
             ldx FIELD_IX        ; Does this field type have a range > 10?
-            lda FType,x         ; ,,
-            tax                 ; ,,
-            lda TRangeH,x       ; ,,
+            lda FType,x         ; ,, (This check is done specifically for
+            tax                 ; ,, the group # setting of the P-10
+            lda TRangeH,x       ; ,, layer B field)
             cmp #10             ; ,,
             bcc num_r           ; ,, If so, put a space after the value
             iny                 ; ,, to clear out an unused tens place
@@ -2719,9 +2705,9 @@ StatusH:    .byte >Failed,>Received,>Sent,>NotEmpty,>Welcome,>Generated
             .byte >Swapped,>NoGroup
 
 ; MIDI Messages and Headers
-EditBuffer: .byte $f0, $01, $32, $03, $ff
-PrgDump:    .byte $f0, $01, $32, $02, $ff
-PrgRequest: .byte $f0, $01, $32, $05, $05, $01, $ff
+EditBuffer: .byte $f0, $01, $32, $03, 00
+PrgDump:    .byte $f0, $01, $32, $02, 00
+PrgRequest: .byte $f0, $01, $32, $05, $05, $01, 00
 
 ; System Exclusive File Extension
 SyxExt:     .asc ".SYX,P,W"
@@ -2751,13 +2737,13 @@ KeyCode:    .byte INCR,DECR,F1,F3,F5,F7,PREV,NEXT,EDIT
             .byte PRGREQ,UNDO,HEX,MARK,0
 CommandL:   .byte <IncValue-1,<DecValue-1,<PageSel-1,<PageSel-1
             .byte <PageSel-1,<PageSel-1,<PrevField-1,<NextField-1,
-            .byte <EditName-1,<PrevVoice-1,<NextVoice-1
+            .byte <Advance-1,<PrevVoice-1,<NextVoice-1
             .byte <GoSetup-1,<GoHelp-1,<Generate-1,<SetPrg-1,<GoSend-1
             .byte <GoErase-1,<GoCopy-1,<GoSave-1,<GoLoad-1,<Request-1
             .byte <Undo-1,<GoHex-1,<Mark-1
 CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
             .byte >PageSel-1,>PageSel-1,>PrevField-1,>NextField-1,
-            .byte >EditName-1,>PrevVoice-1,>NextVoice-1
+            .byte >Advance-1,>PrevVoice-1,>NextVoice-1
             .byte >GoSetup-1,>GoHelp-1,>Generate-1,>SetPrg-1,>GoSend-1
             .byte >GoErase-1,>GoCopy-1,>GoSave-1,>GoLoad-1,>Request-1
             .byte >Undo-1,>GoHex-1,>Mark-1
