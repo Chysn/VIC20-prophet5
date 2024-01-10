@@ -624,7 +624,7 @@ sel_prog:   tya                 ; Field index
             jmp MainSwitch
             
 EditName:   jsr DrawCursor      ; Draw name cursor
-            ldy #0              ; Get starting screen position of Name field
+            ldy FIELD_IX        ; Get starting screen position of Name field
             jsr FieldLoc        ; ,,
 pos_cur:    jsr find_end        ; Set IX to the character after the last one
             lda #TXTCURSOR      ; Show a cursor in that place
