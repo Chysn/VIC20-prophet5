@@ -41,7 +41,7 @@ Vectors:    .word Start         ; Start
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; 
-UNDOS       = 100               ; Number of undo levels
+UNDOS       = 101               ; Number of undo levels + 1
 
 ; Application Memory
 ; In addition, zero page usage by
