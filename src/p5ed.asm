@@ -405,18 +405,18 @@ PlayScale:  sty ANYWHERE        ; Store the pressed key code
 SysexReady: lda #0              ; Clear the sysex ready flag
             sta READY           ; ,,
             ldy CVOICE_IX       ; Is this a valid Prophet-5 voice dump?
-            jsr Validate        ; ,,
-            bne SysexFail       ; ,,
-            ldy CVOICE_IX       ; Clear undo data for this voice
-            jsr ClrUndo         ; ,,
+            jsr ClrUndo         ; .. (Clear undo whether good or not)
+            jsr Validate        ; ,, (Y is preserved by ClrUndo)
+            bne sysex_fail      ; ,,
             ldx #SM_RECV        ; Show received success status
             jsr Status          ; ,,
-            jsr UnpBuff         ;   ,,
-            jsr PopFields       ;   ,,            
-lib_end:    jmp MainLoop
-SysexFail:  ldx #SM_FAIL        ; Show fail status message. A future Validate/
-            jsr Status          ;   NewVoice should initialize this voice, 
-            jmp MainLoop        ;   probably during SelVoice.
+            jsr UnpBuff         ; Unpack to edit buffer
+            jsr PopFields       ; And populate field for current page
+            jmp MainLoop
+sysex_fail: jsr NewVoice        ; Generate new voice to clear bad sysex
+            ldx #SM_FAIL        ; Show fail status message
+            jsr Status          ;   ,,
+            jmp MainLoop        ;   ,,
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; COMMANDS
