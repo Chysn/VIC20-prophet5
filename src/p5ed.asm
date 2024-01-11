@@ -209,7 +209,7 @@ F_DETUNE    = 4                 ; Detune 0-7
 F_WHEEL     = 5                 ; Wheel Range 0-12
 F_FILTER    = 6                 ; Filter type (1/2, 3)
 F_NAME      = 7                 ; Program name
-F_COUNT     = 8                 ; Voice count 0-10
+F_COUNT     = 8                 ; Voice count 0-9
 F_RETRIG    = 9                 ; Unison retrigger (LO, LOR, LAS, LAR)
 F_FREQ      = 10                ; Frequency (C0 ~ C4)
 F_MIDICH    = 11                ; MIDI Channel (1-16)
@@ -2480,11 +2480,11 @@ Num:        tay
             iny
 one_dig:    pla
             sta (FIELD),y
-            ldx FIELD_IX        ; Does this field type have a range > 10?
+            ldx FIELD_IX        ; Does this field type have a range >= 9?
             lda FType,x         ; ,, (This check is done specifically for
             tax                 ; ,, the group # setting of the P-10
             lda TRangeH,x       ; ,, layer B field)
-            cmp #10             ; ,,
+            cmp #9              ; ,,
             bcc num_r           ; ,, If so, put a space after the value
             iny                 ; ,, to clear out an unused tens place
             lda #" "
@@ -2763,8 +2763,8 @@ TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1
             .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>Num1Ind-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0,0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,4
-TColor:     .byte 8, 20,  1,4,2, 2,3,21,  2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
+TRangeH:    .byte 127,0,  1,2,7,11,1,90, 9, 5,107,15,11,64,0,10,0,112,3,96,39,4
+TColor:     .byte 8, 20,  1,4,2, 2,3,21, 2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
 
 ; Enum NRPN, integer values, and enum text locations
 EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,89,89,89,89
