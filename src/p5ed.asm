@@ -2469,7 +2469,7 @@ VCount:     cmp #10             ; If the value is 10 (PU2), then treat this
             beq Enum            ;   field as an enum
             pha                 ; Clear the space where "PU2" ends when there's
             lda #" "            ;   just a one- or two-digit number
-            ldy #3              ;   ,,
+            ldy #2              ;   ,,
             sta (FIELD),y       ;   ,,
             pla                 ;   ,,
             ; Fall through to Num1Ind for all other values
