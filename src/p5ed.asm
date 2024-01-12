@@ -2462,6 +2462,12 @@ bankprg:    ora #$30
             adc #1
             sta (FIELD),y
             rts
+       
+; Unison Voice Count
+; Here to support the PU2 mode     
+VCount:     cmp #10             ; If the value is 10 (PU2), then treat this
+            beq Enum            ;   field as an enum
+            ; Fall through to Num1Ind for all other values
             
 ; Draw 1-Indexed Numeric Field
 Num1Ind:    clc 
@@ -2755,28 +2761,28 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
 ; 17=Q Comp, 18=Bi-Timbral Mode, 19=Note Number, 20=Program Number, 21=Bank
 TSubL:      .byte <ValBar-1,<VoiceLine-1,<Switch-1,<Enum-1
-            .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Num1Ind-1,<Enum-1,<Freq-1
+            .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<VCount-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1
             .byte <QComp-1,<Enum-1,<NoteNum-1,<Program-1,<Num1Ind-1
 TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
-            .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Num1Ind-1,>Enum-1,>Freq-1
+            .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>VCount-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1
             .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>Num1Ind-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0,0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90, 9, 5,107,15,11,64,0,10,0,112,3,96,39,4
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,4
 TColor:     .byte 8, 20,  1,4,2, 2,3,21, 2, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
 
 ; Enum NRPN, integer values, and enum text locations
-EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,89,89,89,89
-EnumInt:    .byte 0,  1, 2, 0, 1, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3
+EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,89,89,89,89,53
+EnumInt:    .byte 0,  1, 2, 0, 1, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3,10
 EnumTxtL:   .byte <NoTrack,<HalfTrack,<FullTrack
             .byte <Rev1,<Rev3
             .byte <LO,<LOR,<LAS,<LAR,<HI,<HIR
-            .byte <P5,<NOR,<STC,<SPL
+            .byte <P5,<NOR,<STC,<SPL,<PU2
 EnumTxtH:   .byte >NoTrack,>HalfTrack,>FullTrack
             .byte >Rev1,>Rev3
             .byte >LO,>LOR,>LAS,>LAR,>HI,>HIR
-            .byte >P5,>NOR,>STC,>SPL
+            .byte >P5,>NOR,>STC,>SPL,>PU2
 
 ; Enum field text
 NoTrack:    .asc "NONE",0       ; Filter keyboard modes
@@ -2794,6 +2800,7 @@ P5:         .asc "---",0        ; Bi-Timbral modes
 NOR:        .asc "NOR",0        ; ,,
 STC:        .asc "STC",0        ; ,,
 SPL:        .asc "SPL",0        ; ,,
+PU2:        .asc "PU",0        ; Polyphonic Unison
 
 ; Note Name Tables
 ; Flats are constructed of two screen code characters, Commodre-M and
