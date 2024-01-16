@@ -214,15 +214,15 @@ F_RETRIG    = 9                 ; Unison retrigger (LO, LOR, LAS, LAR)
 F_FREQ      = 10                ; Frequency (C0 ~ C4)
 F_MIDICH    = 11                ; MIDI Channel (1-16)
 F_DEVICE    = 12                ; Storage Device Number (8-11)
-F_64        = 13                ; Program number, step count
+F_VOICE     = 13                ; Voice number
 F_NONE      = 14                ; Blank field
 F_MUTATIONS = 15                ; Number of mutations
 F_HEX       = 16                ; Full-page hex view
 F_QCOMP     = 17                ; Q Compensation
 F_BTMODE    = 18                ; Bi-Timbral Mode
 F_NOTE      = 19                ; Note Number
-F_PROGRAM   = 20                ; Program Number
-F_BANK      = 21                ; Bank Number
+F_PROGRAM   = 20                ; P5 Program Number
+F_BANK      = 21                ; P5 Bank Number
 
 ; System Resources
 CINV        = $0314             ; ISR vector
@@ -554,7 +554,7 @@ nrpn_msg:   lda PAGE            ; If < and > are pressed on the
             beq no_deb          ;   ,,
             cmp #F_NOTE         ;   ,,
             beq no_deb          ;   ,,
-            cmp #F_64           ;   ,,
+            cmp #F_VOICE        ;   ,,
             beq no_deb          ;   ,,
 id_r:       jmp MainLoop
 no_deb:     ldx REPEAT
@@ -701,7 +701,7 @@ gen_ok:     lda $9114           ; Seed the random number shift register
             lda LibraryL,x      ; ,,
             jsr UnpSeed         ; ,,
             ldx SEED2_PRG       ; Get seed 2 program library number
-            dex                 ;   -1 because SEED1_PRG is 1-indexed
+            dex                 ;   -1 because SEED2_PRG is 1-indexed
             lda #<SEED2         ; Unpack seed 2 from library
             sta P_RESULT        ; ,,
             lda #>SEED2         ; ,,
@@ -2430,10 +2430,10 @@ Name:       ldy #20
             jmp WriteText
                  
 ; Draw Enum Field
-; (Track, Revision, Retrigger, Bi-Timbral)       
+; (Track, Revision, Retrigger, Bi-Timbral, Unison Count PU2)       
 Enum:       sty ANYWHERE        ; Save the NRPN for comparison
             ldx #(EnumInt-EnumNRPN-1)
--loop:      lda EnumNRPN,x      ; Is the entry the corrent NRPN?
+-loop:      lda EnumNRPN,x      ; Is the entry the current NRPN?
             cmp ANYWHERE        ; ,,
             bne next_enum
             lda EnumInt,x       ; Does the entry match the NRPN value?
@@ -2441,7 +2441,8 @@ Enum:       sty ANYWHERE        ; Save the NRPN for comparison
             beq found_enum      ; If so, write its text
 next_enum:  dex
             bpl loop
-            rts 
+            lda CVOICE,y        ; If value not found in enum table, fall back
+            bpl Num1Ind         ;   to displaying an integer
 found_enum: lda EnumTxtH,x
             tay
             lda EnumTxtL,x
@@ -2462,35 +2463,36 @@ bankprg:    ora #$30
             adc #1
             sta (FIELD),y
             rts
-       
-; Unison Voice Count
-; Here to support the PU2 mode     
-VCount:     cmp #10             ; If the value is 10 (PU2), then treat this
-            beq Enum            ;   field as an enum
-            pha                 ; Clear the space where "PU2" ends when there's
-            lda #" "            ;   just a one- or two-digit number
-            ldy #2              ;   ,,
-            sta (FIELD),y       ;   ,,
-            pla                 ;   ,,
-            ; Fall through to Num1Ind for all other values
-            
+
+; Voice Number, which is like Num but zero-padded
+VoiceNum:   cmp #10             ; If the value is two digits, draw as normal
+            bcs Num             ; ,,
+            tax                 ; Stash the one-digit number
+            lda #"0"            ; Draw a zero in front of it
+            ldy #0              ; ,,
+            sta (FIELD),y       ; ,,
+            iny                 ; Shift Y to the next place
+            txa                 ; Put the value back in A
+            ora #$30            ; Convert value to numeral
+            jmp one_dig+1       ; Show one-digit number (skipping PLA)
+                      
 ; Draw 1-Indexed Numeric Field
 Num1Ind:    clc 
             adc #1
             ; Fall through to Num
 
 ; Draw Numeric Field       
-Num:        tay 
-            jsr TwoDigNum
-            ldy #0
-            pha
-            txa
-            cmp #$30
-            beq one_dig 
-            sta (FIELD),y
-            iny
-one_dig:    pla
-            sta (FIELD),y
+Num:        tay                 ; Get two digit number numeral codes in
+            jsr TwoDigNum       ;   X (tens numeral) and A (ones numeral)
+            ldy #0              ; Place the first numeral on the screen
+            pha                 ; ,,
+            txa                 ; ,,
+            cmp #"0"            ; ,, unless it's a zero, in which case,
+            beq one_dig         ; ,, refrain from placing it
+            sta (FIELD),y       ; ,,
+            iny                 ; Advance to the next place
+one_dig:    pla                 ; Get the ones place back
+            sta (FIELD),y       ;   and place it on the screen
             ldx FIELD_IX        ; Does this field type have a range >= 9?
             lda FType,x         ; ,, (This check is done specifically for
             tax                 ; ,, the group # setting of the P-10
@@ -2766,12 +2768,12 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 ; 11=MIDI Ch,12=Device#, 13=SixtyFour, 14=No Field, 15=Mutations, 16=Hex
 ; 17=Q Comp, 18=Bi-Timbral Mode, 19=Note Number, 20=Program Number, 21=Bank
 TSubL:      .byte <ValBar-1,<VoiceLine-1,<Switch-1,<Enum-1
-            .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<VCount-1,<Enum-1,<Freq-1
-            .byte <Num1Ind-1,<Num-1,<Num-1,<Blank-1,<Num-1,<ShowHex-1
+            .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Enum-1,<Enum-1,<Freq-1
+            .byte <Num1Ind-1,<Num-1,<VoiceNum-1,<Blank-1,<Num-1,<ShowHex-1
             .byte <QComp-1,<Enum-1,<NoteNum-1,<Program-1,<Num1Ind-1
 TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
-            .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>VCount-1,>Enum-1,>Freq-1
-            .byte >Num1Ind-1,>Num-1,>Num-1,>Blank-1,>Num-1,>ShowHex-1
+            .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Enum-1,>Enum-1,>Freq-1
+            .byte >Num1Ind-1,>Num-1,>VoiceNum-1,>Blank-1,>Num-1,>ShowHex-1
             .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>Num1Ind-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0,0
 TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,4
@@ -2872,15 +2874,15 @@ FType:      .byte F_NAME,F_SWITCH,F_SWITCH,F_FREQ,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_SWITCH,F_RETRIG,F_COUNT,F_DETUNE,F_VALUE,F_VALUE
             .byte F_WHEEL,F_VALUE,F_SWITCH,F_SWITCH
             .byte F_VALUE,F_SWITCH,F_SWITCH
-            .byte F_BTMODE,F_BANK,F_PROGRAM,F_NOTE,F_VALUE,F_VALUE ; P10 parameters
+            .byte F_BTMODE,F_BANK,F_PROGRAM,F_NOTE,F_VALUE,F_VALUE ; P10
             
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
             .byte F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG,F_PRG
             
             .byte F_HEX
 
-            .byte F_MIDICH,F_SWITCH,F_SWITCH,F_DEVICE,F_64,F_64,F_MUTATIONS
-            .byte F_VALUE
+            .byte F_MIDICH,F_SWITCH,F_SWITCH,F_DEVICE,F_VOICE,F_VOICE
+            .byte F_MUTATIONS,F_VALUE
             .byte F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE,F_NOTE
             
             .byte F_NONE
