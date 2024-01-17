@@ -446,7 +446,18 @@ switchlib:  jsr ClrCursor
 chlib_r:    jmp MainLoop
 
 ; Move Cursor to Previous Field            
-PrevField:  ldy FIELD_IX        ; If the current index is 0, stay here
+PrevField:  lda PAGE            ; Is this the Library view?
+            cmp #4              ; ,,
+            bne pr_nlv          ; ,,
+            lda FIELD_IX        ; If so, is this the first field number?
+            cmp #FLIBSTART-FPage; ,,
+            bne pr_nlv          ; ,, If below last field, proceed as normal
+            lda VIEW_START      ; Can the voices advance any further?
+            beq pr_mv           ; ,, If not, stay put
+            dec VIEW_START      ; ,, If so, decrement start of view index
+pr_mv:      jsr PopFields       ; Redraw the screen and back to main
+            jmp MainLoop        ; ,,
+pr_nlv:     ldy FIELD_IX        ; If the current index is 0, stay here
             beq pf_r            ; ,,
             dey
             lda FPage,y
@@ -498,8 +509,20 @@ nl_set:     sta CVOICE_IX       ; Store the new index
             jmp switchlib       ; Swith library from PrevVoice
                       
 ; Move Cursor to Next Field
-NextField:  ldy FIELD_IX
-            cpy #LFIELD - FPage
+NextField:  lda PAGE            ; Is this the Library view?
+            cmp #4              ; ,,
+            bne nx_nlv          ; ,,
+            lda FIELD_IX        ; If so, is this the last field number?
+            cmp #FLIBEND-FPage-1; ,,
+            bne nx_nlv          ; ,, If above last field, proceed as normal
+            lda VIEW_START      ; Can the voices advance any further?
+            cmp #48             ; ,,
+            beq nx_mv           ; ,, If not, stay put
+            inc VIEW_START      ; ,, If so, increment start of view index
+nx_mv:      jsr PopFields       ; Redraw the screen and back to main
+            jmp MainLoop        ; ,,
+nx_nlv:     ldy FIELD_IX
+            cpy #LFIELD-FPage
             beq pf_r
             iny
             lda FPage,y
@@ -508,7 +531,7 @@ NextField:  ldy FIELD_IX
             jsr ClrCursor
             ldy FIELD_IX
             iny
-            jmp ch_f            ; Go to change field code in PrevFIeld
+            jmp ch_f            ; Go to change field code in PrevField
                                             
 ; Select Page           
 PageSel:    sec
@@ -2830,7 +2853,8 @@ FPage:      .byte 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
             .byte 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
             .byte 3,3,3,3,3,3,3,3,3,3,3,3,3
             .byte 3,3,3,3,3,3 ; Prophet-10
-            .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+FLIBSTART:  .byte 4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4
+FLIBEND:    
             .byte 5
             .byte 6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6
             .byte 7
