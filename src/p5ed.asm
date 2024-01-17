@@ -455,7 +455,7 @@ PrevField:  lda PAGE            ; Is this the Library view?
             lda VIEW_START      ; Can the voices advance any further?
             beq pr_mv           ; ,, If not, stay put
             dec VIEW_START      ; ,, If so, decrement start of view index
-pr_mv:      jmp ScrollProg      ; Change program
+pr_mv:      jmp ScrVoice        ; Change voice when scrolling
 pr_nlv:     ldy FIELD_IX        ; If the current index is 0, stay here
             beq pf_r            ; ,,
             dey
@@ -471,7 +471,7 @@ ch_f:       sty FIELD_IX        ; Endpoint for changing the field
             lda PAGE            ; Are we on the Library View?
             cmp #4              ; ,,
             bne lvf_r           ; If so, change the current program
-ScrollProg: jsr PackVoice       ; Pack changes on the current voice to mem
+ScrVoice:   jsr PackVoice       ; Pack changes on the current voice to mem
             lda FIELD_IX        ; Field index
             sta LAST_LIB_IX+4   ;   ,, (Preserve last library index)
             clc                 ;   ,,
@@ -518,7 +518,7 @@ NextField:  lda PAGE            ; Is this the Library view?
             cmp #48             ; ,,
             beq nx_mv           ; ,, If not, stay put
             inc VIEW_START      ; ,, If so, increment start of view index
-nx_mv:      jmp ScrollProg      ; Change program
+nx_mv:      jmp ScrVoice        ; Change voice when scrolling
 nx_nlv:     ldy FIELD_IX
             cpy #LFIELD-FPage
             beq pf_r
