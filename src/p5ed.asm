@@ -1675,7 +1675,9 @@ wr_r:       rts
             
 ; Convert PETSCII to Screen Code
 ; In A
-PETtoScr:   cmp #123            ; Make the Name field case-insensitive
+PETtoScr:   cmp #0              ; A zero will be treated as a space here
+            beq space           ; ,,
+            cmp #123            ; Make the Name field case-insensitive
             bcs ch_pet          ;   by subtracting 32 for uppercase
             cmp #97             ;   ,,
             bcc ch_pet          ;   ,,
@@ -1702,6 +1704,8 @@ pet_r:      rts
 b_a0:       sbc #$40
 b_c0:       and #$7f
             rts
+space:      lda #" "            ; Screen code for space
+            .byte $3c           ; (SKW)
 pi:         lda #$5e            ; Screen code for pi
             .byte $3c           ; (SKW)
 backsl:     lda #$4d            ; Screen code for backslash
@@ -2652,7 +2656,6 @@ pl_nc2:     lda #<TEMPNAME
             ldx #2
             ldy #7
 -loop:      lda TEMPNAME,x
-            beq prli_r
             jsr PETtoScr
             sta (FIELD),y
             inx 
