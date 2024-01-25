@@ -890,7 +890,10 @@ GoSend:     ldy CVOICE_IX       ; If this is not a valid program, cannot
             lda #<SendMenu2     ; ,, If no prog number, show only edit buffer
             ldy #>SendMenu2     ; ,,   option
             jmp voice_menu
-all_opt:    lda #<SendMenu      ; Put options into popup window
+all_opt:    cmp #5              ; Is this a factory program?
+            bcc all_menu        ; ,, If not just show menu
+            ror COMMODORE       ; ,, If so, set flag to show TO FACTORY
+all_menu:   lda #<SendMenu      ; Put options into popup window
             ldy #>SendMenu      ;   ,,
 voice_menu: jsr PrintStr        ;   ,,
             bit COMMODORE       ; Factory flag?
@@ -2002,7 +2005,7 @@ DumpVoice:  ldy #0              ; Set the output index
             bpl dv_send         ; ,, If not, send
             cmp #5              ; Is this already in a Factory group?
             bcs dv_send         ; ,, If so, send
-            clc                 ; If all the aforementioned conditions pass,
+            ;clc                ; If all the aforementioned conditions pass,
             adc #5              ;   add 5 to the group number
 dv_send:    jsr MIDIOUT         ; Send it to the Beige Maze MIDI KERNAL
             bcs dv_err          ; Show error if timeout
