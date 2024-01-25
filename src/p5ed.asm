@@ -46,7 +46,7 @@ UNDOS       = 100               ; Number of undo levels
 ; Application Memory
 ; In addition, zero page usage by
 ; MIDI KERNAL uses $9b - $9f
-; SEQ PACKING uses $f9 - $ff
+; SEQ PACKING uses $f9 - $ff and $60 - $6f
 FIELD       = $00               ; Pointer to field memory location (2 bytes)
 SYIN        = $02               ; Sysex In pointer (2 bytes)
 SYIN_IX     = $04               ; Sysex In position index
@@ -169,7 +169,7 @@ STACOL      = 2                 ; Status line color (red)
 LIBCOL      = 5                 ; Library display color (green)
 STATUSDISP  = SCREEN+484        ; Status line starting location
 WINDOW_ED   = SCREEN+247        ; Window editor location
-PROGRESSBAR = SCREEN+227        ; Progress bar location
+PROGRESSBAR = SCREEN+205        ; Progress bar location
 
 ; Key Constants
 F1          = 39
@@ -818,7 +818,7 @@ SetGrp:     ldy CVOICE_IX       ; Get program location to TEMPNAME
 set_group:  pha
             jsr Popup
             pla
-            sta SCREEN+232      ; Show original group number on screen
+            sta SCREEN+210      ; Show original group number on screen
             lda #<GrpLabel      ; Show label
             ldy #>GrpLabel      ; ,,
             jsr PrintStr        ; ,,
@@ -895,10 +895,10 @@ all_opt:    lda #<SendMenu      ; Put options into popup window
 voice_menu: jsr PrintStr        ;   ,,
             bit COMMODORE       ; Factory flag?
             bpl vgetkey         ; ,,
-            ldy #0              ; Then show the word "FACTORY" after SEND
+            ldy #0              ; Then show the words "TO FACTORY" after SEND
 -loop:      lda FactoryLab,y    ; ,,
             beq vgetkey         ; ,,
-            sta SCREEN+208,y    ; ,,
+            sta SCREEN+203,y    ; ,,
             iny                 ; ,,
             bne loop            ; ,,
 vgetkey:    jsr Keypress        ; Get pressed key
@@ -1144,9 +1144,9 @@ GoLoad:     jsr CLALL
             bit COMMODORE       ; If this is the Commodore mode,
             bpl loadlib         ;   add letters so that it reads
             lda #20             ;   LOAD TO
-            sta SCREEN+208      ;   ,,
+            sta SCREEN+203      ;   ,,
             lda #15             ;   ,,
-            sta SCREEN+209      ;   ,,
+            sta SCREEN+204      ;   ,,
 loadlib:    jsr SourceVce  
             jsr FileName        ; Get name from user
             bcc start_load
@@ -3066,7 +3066,7 @@ Window:     .asc 5 ; White
             .asc CR,CR,CR,CR,CR,CR
             .asc RT,RT,RT,RT
             .asc P_TL,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_T,P_TR,CR
-            .asc RT,RT,RT,RT,P_L,"ED FOR P5  ",30,RVON,$d6,RVOF,5,P_R,CR
+            .asc RT,RT,RT,RT,P_L,"           ",30,RVON,$d6,RVOF,5,P_R,CR
             .asc RT,RT,RT,RT
             .asc P_L,30,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,TL,5,P_R,CR
             .asc RT,RT,RT,RT,P_L,"            ",P_R,CR
@@ -3074,33 +3074,36 @@ Window:     .asc 5 ; White
             .asc RT,RT,RT,RT,P_L,"            ",P_R,CR
             .asc RT,RT,RT,RT
             .asc P_BL,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_B,P_BR,CR
-            .asc RT,RT,RT,RT,RT,UP,UP,UP,UP ; Position for label
+            .asc RT,RT,RT,RT,RT,UP,UP,UP,UP,UP,UP ; Position for label
             .asc 30,00
 
 ; Popup Window Dialogs            
-PrgLabel:   .asc 5,"CHANGE",CR
+PrgLabel:   .asc 5,"CHANGE",CR,CR
             .asc RT,RT,RT,RT,RT,"PROGRAM # TO",30,0
-GrpLabel:   .asc 5,"CHANGE",CR
+GrpLabel:   .asc 5,"CHANGE",CR,CR
             .asc RT,RT,RT,RT,RT,"GROUP #",RT," TO",30,0
 ReqLabel:   .asc 5,"REQUEST #",30,0
 SaveLabel:  .asc 5,"SAVE",30,0
 SaveLabel2: .asc 5,"SAVE MARKED",30,0
 LoadLabel:  .asc 5,"LOAD",30,0
-SendMenu:   .asc 5,"SEND VOICE",CR
+SendMenu:   .asc 5,"SEND VOICE",CR,CR,CR
             .asc RT,RT,RT,RT,RT,RVON,"P",RVOF,"ROGRAM"," ",RVON,"E",RVOF,"DIT",CR
             .asc RT,RT,RT,RT,RT,RVON,"B",RVOF,"ANK"," ",RVON,"G",RVOF,"ROUP"
             .asc 30,0
-SendMenu2:  .asc 5,"SEND VOICE",CR,CR
+SendMenu2:  .asc 5,"SEND VOICE",CR,CR,CR
             .asc RT,RT,RT,RT,RT,RVON,"E",RVOF,"DIT BUFF"
             .asc 30,0       
 EraseConf:  .asc 5,"ERASE",CR,CR
+            .asc RT,RT,RT,RT,RT,"VOICE",CR,CR
             .asc RT,RT,RT,RT,RT,"SURE? (Y/N)",CR
             .asc 30,0
-CopyLabel:  .asc 5,"COPY",CR
+CopyLabel:  .asc 5,"COPY",CR,CR
+            .asc RT,RT,RT,RT,RT,"VOICE",CR
             .asc RT,RT,RT,RT,RT,"TO VOICE",30,0
-SwapLabel:  .asc 5,"SWAP",CR
+SwapLabel:  .asc 5,"SWAP",CR,CR
+            .asc RT,RT,RT,RT,RT,"VOICE",CR
             .asc RT,RT,RT,RT,RT,"WITH VOICE",30,0
-FactoryLab: .asc 6,1,3,20,15,18,25,0 ; FACTORY as screen codes
+FactoryLab: .asc 20,15,32,6,1,3,20,15,18,25,0 ; TO FACTORY as screen codes
                          
 ; Library Sysex Pointers
 ; Indexed             
