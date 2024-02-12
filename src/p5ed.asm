@@ -1844,7 +1844,7 @@ ProgPopup:  ldx #<PROGRESSBAR   ; Set FIELD pointer, which is used by
 ; Draw Popup Window
 Popup:      ldx #SM_BLANK       ; Blank status prior to popup
             jsr Status          ; ,,
-            ldy #230            ; Color everything blue before opening
+            ldy #231            ; Color everything blue before opening
             lda #6              ;   a popup window
 -loop:      sta COLOR,y         ;   ,,
             sta COLOR+230,y     ;   ,,
@@ -2503,7 +2503,24 @@ VoiceNum:   cmp #10             ; If the value is two digits, draw as normal
             txa                 ; Put the value back in A
             ora #$30            ; Convert value to numeral
             jmp one_dig+1       ; Show one-digit number (skipping PLA)
-                      
+
+; Draw bank number
+; Which is basically 1-5, with 6-10 having a factory indicator
+BankNum:    tax                 ; Save original value
+            lda #" "            ; Space screen code is default indicator
+            cpx #5              ; Is this a Factory bank number?
+            bcc not_fact2       ; If not, show the space
+            lda #$86            ; Reverse "F" is factory indicator
+            dex                 ; Decrement X to show bank 1-5
+            dex                 ; ,,
+            dex                 ; ,,
+            dex                 ; ,,
+            dex                 ; ,,
+not_fact2:  ldy #3              ; Show the indicator
+            sta (FIELD),y       ; ,,
+            txa                 ; Restore original (or modified) bank number
+            ; Fall through to Num1Ind
+                                  
 ; Draw 1-Indexed Numeric Field
 Num1Ind:    clc 
             adc #1
@@ -2525,7 +2542,7 @@ one_dig:    pla                 ; Get the ones place back
             lda FType,x         ; ,, (This check is done specifically for
             tax                 ; ,, the group # setting of the P-10
             lda TRangeH,x       ; ,, layer B field)
-            cmp #9              ; ,,
+            cmp #10              ; ,,
             bcc num_r           ; ,, If so, put a space after the value
             iny                 ; ,, to clear out an unused tens place
             lda #" "
@@ -2797,14 +2814,14 @@ CommandH:   .byte >IncValue-1,>DecValue-1,>PageSel-1,>PageSel-1
 TSubL:      .byte <ValBar-1,<VoiceLine-1,<Switch-1,<Enum-1
             .byte <Num-1,<Num1Ind-1,<Enum-1,<Name-1,<Enum-1,<Enum-1,<Freq-1
             .byte <Num1Ind-1,<Num-1,<VoiceNum-1,<Blank-1,<Num-1,<ShowHex-1
-            .byte <QComp-1,<Enum-1,<NoteNum-1,<Program-1,<Num1Ind-1
+            .byte <QComp-1,<Enum-1,<NoteNum-1,<Program-1,<BankNum-1
 TSubH:      .byte >ValBar-1,>VoiceLine-1,>Switch-1,>Enum-1
             .byte >Num-1,>Num1Ind-1,>Enum-1,>Name-1,>Enum-1,>Enum-1,>Freq-1
             .byte >Num1Ind-1,>Num-1,>VoiceNum-1,>Blank-1,>Num-1,>ShowHex-1
-            .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>Num1Ind-1
+            .byte >QComp-1,>Enum-1,>NoteNum-1,>Program-1,>BankNum-1
 TRangeL:    .byte 0,  0,  0,0,0, 0,0,48, 0, 0,  0, 0, 8, 1,0, 0,0,  0,0,36, 0,0
-TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,4
-TColor:     .byte 8, 20,  1,4,2, 2,3,21, 3, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 3,1
+TRangeH:    .byte 127,0,  1,2,7,11,1,90,10, 5,107,15,11,64,0,10,0,112,3,96,39,9
+TColor:     .byte 8, 20,  1,4,2, 2,3,21, 3, 3,  3, 2, 2, 2,0, 2,0,  1,3, 3, 2,1
 
 ; Enum NRPN, integer values, and enum text locations
 EnumNRPN:   .byte 19,19,19,20,20,87,87,87,87,87,87,89,89,89,89,53
