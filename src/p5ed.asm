@@ -601,9 +601,8 @@ DecValue:   jsr PrepField       ; Get field value
             dec CVOICE,x
             jmp nrpn_msg
 
-; Single-Key Edit
+; Single-Key Edit (RETURN)
 ; * Toggles Switches
-; * Edits Name
 ; * Selects Programs in Library
 ; * Advances Others
 Advance:    ldy FIELD_IX        ; Check the field's type for this edit     
